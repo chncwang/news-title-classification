@@ -10,7 +10,7 @@
 
 #include <iostream>
 #include "ComputionGraph.h"
-#include "Stance.h"
+#include "Category.h"
 #include "MySoftMaxLoss.h"
 #include "Targets.h"
 
@@ -20,9 +20,7 @@ class Driver {
 public:
     Driver(int memsize) {}
 
-    ~Driver() {
-
-    }
+    ~Driver() {}
 
 public:
     Graph _cg;  // build neural graphs
@@ -30,9 +28,7 @@ public:
     ModelParams _modelparams;  // model parameters
     HyperParams _hyperparams;
 
-    Metric _favor_metric;
-    Metric _against_metric;
-    Metric _neural_metric;
+    Metric _metric;
     CheckGrad _checkgrad;
     ModelUpdate _ada;  // model update
 
@@ -118,21 +114,21 @@ public:
         for (int count = 0; count < example_num; count++) {
             const Example &example = examples[count];
             cost += _modelparams.loss.loss(&_builders[count]._neural_output,
-                example.m_stance, _favor_metric, _against_metric, _neural_metric, example_num);
+                example.m_category, _metric, example_num);
         }
         _cg.backward();
 
         return cost;
     }
 
-    inline void predict(const Feature &feature, Stance &result, int excluded_class) {
+    inline void predict(const Feature &feature, Category &result, int excluded_class) {
         _cg.clearValue();
         _builders[0].forward(feature);
         _cg.compute();
 
         int intResult;
         _modelparams.loss.predict(&_builders[0]._neural_output, intResult, excluded_class );
-        result = static_cast<Stance>(intResult);
+        result = static_cast<Category>(intResult);
     }
 
     inline dtype cost(const Example &example) {
@@ -141,7 +137,7 @@ public:
         _cg.compute();
 
         dtype cost = _modelparams.loss.cost(&_builders[0]._neural_output,
-            example.m_stance, 1);
+            example.m_category, 1);
 
         return cost;
     }
@@ -160,9 +156,7 @@ public:
 
 private:
     inline void resetEval() {
-        _favor_metric.reset();
-        _against_metric.reset();
-        _neural_metric.reset();
+        _metric.reset();
     }
 
 

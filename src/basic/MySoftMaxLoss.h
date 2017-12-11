@@ -4,14 +4,14 @@
 #include "MyLib.h"
 #include "Metric.h"
 #include "Node.h"
-#include "Stance.h"
+#include "Category.h"
 
 
 class MySoftMaxLoss {
 public:
-    inline dtype loss(PNode x, Stance answer, Metric& favorMetric, Metric &againstMetric, Metric &neuralMetric, int batchsize = 1) {
+    inline dtype loss(PNode x, Category answer, Metric& metric, int batchsize = 1) {
         int nDim = x->dim;
-        int labelsize = 3;
+        int labelsize = 32;
         if (labelsize != nDim) {
             std::cerr << "softmax_loss error: dim size invalid" << std::endl;
             abort();
@@ -35,30 +35,10 @@ public:
             sum2 += scores[i];
         }
         cost += (log(sum2) - log(sum1)) / batchsize;
-        if (optLabel == Stance::FAVOR) {
-            if (answer == optLabel)
-                favorMetric.correct_label_count++;
-            favorMetric.predicated_label_count++;
+        if (answer == optLabel) {
+            metric.correct_label_count++;
         }
-        if (answer == Stance::FAVOR) {
-            favorMetric.overall_label_count++;
-        }
-        if (optLabel == Stance::AGAINST) {
-            if (answer == optLabel)
-                againstMetric.correct_label_count++;
-            againstMetric.predicated_label_count++;
-        }
-        if (answer == Stance::AGAINST) {
-            againstMetric.overall_label_count++;
-        }
-        if (optLabel == Stance::NONE) {
-            if (answer == optLabel)
-                neuralMetric.correct_label_count++;
-            neuralMetric.predicated_label_count++;
-        }
-        if (answer == Stance::NONE) {
-            neuralMetric.overall_label_count++;
-        }
+        metric.overall_label_count++;
 
         for (int i = 0; i < nDim; ++i) {
             float t = answer == i ? 1.0 : 0.0;
@@ -94,7 +74,7 @@ public:
         return prob;
     }
 
-    inline dtype cost(PNode x, Stance answer, int batchsize = 1) {
+    inline dtype cost(PNode x, Category answer, int batchsize = 1) {
         int nDim = x->dim;
         int labelsize = 3;
         if (labelsize != nDim) {

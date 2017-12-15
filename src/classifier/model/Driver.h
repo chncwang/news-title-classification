@@ -62,34 +62,6 @@ public:
     }
 
 
-    inline void TestInitial() {
-        if (!_hyperparams.bValid()) {
-            std::cout << "hyper parameter initialization Error, Please check!"
-                << std::endl;
-            return;
-        }
-        if (!_modelparams.TestInitial(_hyperparams)) {
-            std::cout << "model parameter initialization Error, Please check!"
-                << std::endl;
-            return;
-        }
-        _modelparams.exportModelParams(_ada);
-        _modelparams.exportCheckGradParams(_checkgrad);
-
-        _hyperparams.print();
-
-        _builders.resize(_hyperparams.batch);
-
-        for (int idx = 0; idx < _hyperparams.batch; idx++) {
-            _builders[idx].createNodes(GraphBuilder::max_sentence_length);
-            _builders[idx].initial(&_cg, _modelparams, _hyperparams);
-        }
-
-        setUpdateParameters(_hyperparams.nnRegular, _hyperparams.adaAlpha,
-            _hyperparams.adaEps);
-    }
-
-
     inline dtype train(const vector<Example> &examples, int iter) {
         resetEval();
         _cg.clearValue();

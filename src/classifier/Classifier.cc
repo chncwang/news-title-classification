@@ -1,4 +1,4 @@
-#include "NNCNNLabeler.h"
+#include "Classifier.h"
 #include "Category.h"
 
 #include <chrono> 
@@ -278,32 +278,6 @@ Category Classifier::predict(const Feature &feature, int excluded_class) {
     return category;
 }
 
-void Classifier::test(const string &testFile, const string &outputFile,
-        const string &modelFile) {
-    loadModelFile(modelFile);
-    m_driver.TestInitial();
-    vector<Instance> testInsts = readInstancesFromFile(testFile);
-
-    vector<Example> testExamples;
-    initialExamples(testInsts, testExamples);
-
-    int testNum = testExamples.size();
-    vector<Instance> testInstResults;
-    Metric metric;
-    for (int idx = 0; idx < testExamples.size(); idx++) {
-        Category category = predict(testExamples[idx].m_feature, -1);
-        testInsts[idx].evaluate(category, metric);
-        Instance curResultInst;
-        //curResultInst.assignLabel(result_label);
-        testInstResults.push_back(testInsts[idx]);
-    }
-    std::cout << "test:" << std::endl;
-    metric.print();
-
-    //m_pipe.outputAllInstances(outputFile, testInstResults);
-}
-
-
 void Classifier::loadModelFile(const string &inputModelFile) {
     ifstream is(inputModelFile);
     if (is.is_open()) {
@@ -325,26 +299,18 @@ void Classifier::writeModelFile(const string &outputModelFile) {
         std::cout << "open output file error" << endl;
 }
 
-#include "Targets.h"
-
 //int main(int argc, char *argv[]) {
-//	vector<Instance> instances = readInstancesFromFile("C:/N3LDGStanceDetector/data/SemEval2016-Task6-subtaskB-testdata-gold.txt");
-//
-//	for (Instance &ins : instances) {
-//		for (const string &w : ins.m_target_words) {
-//			std::cout << w << " ";
-//		}
-//		std::cout << std::endl;
-//		for (string &w : ins.m_title_words) {
-//			std::cout << w << "|";
-//		}
-//		std::cout << std::endl;
-//	}
-//
-//	while (true);
-//	return 0;
-//}
+//    vector<Instance> instances = readInstancesFromFile("/home/wqs/news-title-classification/data/train_cla_utf8.txt");
+//    for (Instance &ins : instances) {
+//        std::cout << ins.m_category << std::endl;
+//        for (string &w : ins.m_title_words) {
+//            std::cout << w << "|";
+//        }
+//        std::cout << std::endl;
+//    }
 
+//    return 0;
+//}
 
 int main(int argc, char *argv[]) {
     std::string trainFile = "", devFile = "", testFile = "", modelFile = "", optionFile = "";
@@ -378,9 +344,5 @@ int main(int argc, char *argv[]) {
     if (bTrain) {
         the_classifier.train(trainFile, devFile, testFile, modelFile, optionFile);
     } else {
-        the_classifier.test(testFile, outputFile, modelFile);
     }
-    //getchar();
-    //test(argv);
-    //ah.write_values(std::cout);
 }

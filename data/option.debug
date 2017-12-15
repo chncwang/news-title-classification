@@ -1,0 +1,11 @@
+dropProb = 0.5
+batchSize = 64
+wordCutOff = 4
+wordEmbFineTune = false
+maxIter = 1000
+maxInstance = -1
+outBest = .debug
+hiddenSize = 50
+wordEmbSize = 100
+adaAlpha = 0.001
+#wordFile = /home/wqs/skip_nostop_single_100features_5minwords_5context_big.txt

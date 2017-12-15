@@ -24,15 +24,18 @@ public:
         }
         opts.wordDim = words.nDim;
         opts.labelSize = 32;
-        left_to_right_lstm_param.initial(opts.hiddenSize, opts.inputSize);
-        right_to_left_lstm_param.initial(opts.hiddenSize, opts.inputSize);
-        bi_param.initial(opts.hiddenSize, opts.inputSize, opts.inputSize);
-        olayer_linear.initial(opts.labelSize, opts.inputSize, true);
+        left_to_right_lstm_param.initial(opts.hiddenSize, opts.wordDim);
+        right_to_left_lstm_param.initial(opts.hiddenSize, opts.wordDim);
+        bi_param.initial(opts.hiddenSize, opts.hiddenSize, opts.hiddenSize);
+        olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
         return true;
     }
 
     void exportModelParams(ModelUpdate& ada){
         words.exportAdaParams(ada);
+        left_to_right_lstm_param.exportAdaParams(ada);
+        right_to_left_lstm_param.exportAdaParams(ada);
+        bi_param.exportAdaParams(ada);
         olayer_linear.exportAdaParams(ada);
     }
 

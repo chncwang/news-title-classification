@@ -125,7 +125,6 @@ void Classifier::train(const string &trainFile, const string &devFile,
         addTestAlpha(testInsts);
     }
 
-    static vector<Instance> decodeInstResults;
     bool bCurIterBetter = false;
 
     vector<Example> trainExamples, devExamples, testExamples;
@@ -158,14 +157,10 @@ void Classifier::train(const string &trainFile, const string &devFile,
     for (int iter = 0; iter < m_options.maxIter; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
-        if (true) {
-            indexes = getClassBalancedIndexes(trainExamples);
-        } else {
-            for (int i = 0; i < trainExamples.size(); ++i) {
-                indexes.push_back(i);
-            }
-            std::random_shuffle(indexes.begin(), indexes.end());
+        for (int i = 0; i < trainExamples.size(); ++i) {
+            indexes.push_back(i);
         }
+        std::random_shuffle(indexes.begin(), indexes.end());
         int batchBlock = indexes.size() / m_options.batchSize;
         if (indexes.size() % m_options.batchSize != 0)
             batchBlock++;
@@ -212,18 +207,12 @@ void Classifier::train(const string &trainFile, const string &devFile,
         Metric dev_metric;
         auto dev_time_start = std::chrono::high_resolution_clock::now();
         bCurIterBetter = false;
-        if (!m_options.outBest.empty())
-            decodeInstResults.clear();
         assert(devExamples.size() > 0);
         for (int idx = 0; idx < devExamples.size(); idx++) {
             int excluded_class = -1;
             Category result = predict(devExamples[idx].m_feature, excluded_class);
 
             devInsts[idx].evaluate(result, dev_metric);
-
-            if (!m_options.outBest.empty()) {
-                decodeInstResults.push_back(devInsts[idx]);
-            }
         }
 
         auto dev_time_end = std::chrono::high_resolution_clock::now();
@@ -240,18 +229,12 @@ void Classifier::train(const string &trainFile, const string &devFile,
 
         float test_acc = 0;
         auto test_time_start = std::chrono::high_resolution_clock::now();
-        if (!m_options.outBest.empty())
-            decodeInstResults.clear();
         Metric test_metric;
         for (int idx = 0; idx < testExamples.size(); idx++) {
             int excluded_class = -1;
             Category category = predict(testExamples[idx].m_feature, excluded_class);
 
             testInsts[idx].evaluate(category, test_metric);
-
-            if (bCurIterBetter && !m_options.outBest.empty()) {
-                decodeInstResults.push_back(testInsts[idx]);
-            }
         }
 
         auto test_time_end = std::chrono::high_resolution_clock::now();

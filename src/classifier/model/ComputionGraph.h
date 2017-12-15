@@ -27,6 +27,7 @@ public:
         _bi_nodes.resize(length_upper_bound);
         _left_to_right_lstm.resize(length_upper_bound);
         _right_to_left_lstm.resize(length_upper_bound);
+        _max_pool_node.setParam(length_upper_bound);
     }
 
 public:
@@ -47,7 +48,7 @@ public:
             n.derivate = drelu;
         }
         _max_pool_node.init(opts.hiddenSize, -1);
-        _neural_output.init(opts.hiddenSize, -1);
+        _neural_output.init(opts.labelSize, -1);
         _neural_output.setParam(&model.olayer_linear);
         _modelParams = &model;
     }

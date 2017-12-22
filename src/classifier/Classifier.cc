@@ -221,7 +221,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
             << "s" << std::endl;
         std::cout << "dev:" << std::endl;
         dev_metric.print();
-        dev_acc = metric.getAccuracy();
+        dev_acc = dev_metric.getAccuracy();
 
         if (!m_options.outBest.empty() > bestDIS) {
             bCurIterBetter = true;

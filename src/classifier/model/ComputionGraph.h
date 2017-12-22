@@ -75,6 +75,7 @@ public:
         std::vector<Node*> bi_node_ptrs = toPointers<BiNode, Node>(_bi_nodes,
                 feature.m_title_words.size());
         _max_pool_node.forward(_graph, bi_node_ptrs);
+        _neural_output.forward(_graph, &_max_pool_node);
     }
 };
 

@@ -47,9 +47,6 @@ public:
         }
         _modelparams.exportModelParams(_ada);
         _modelparams.exportCheckGradParams(_checkgrad);
-
-        _hyperparams.print();
-
         _builders.resize(_hyperparams.batch);
 
         for (int idx = 0; idx < _hyperparams.batch; idx++) {

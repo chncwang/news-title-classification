@@ -7,13 +7,13 @@
 #include "MyLib.h"
 #include "Concat.h"
 #include "BiOP.h"
+#include "UniOP.h"
 
 class GraphBuilder {
 public:
     std::vector<LookupNode> _input_nodes;
-    LSTM1Builder _left_to_right_lstm;
-    LSTM1Builder _right_to_left_lstm;
-    std::vector<BiNode> _bi_nodes;
+    WindowBuilder _window_builder;
+    std::vector<UniNode> _uni_nodes;
     MaxPoolNode _max_pool_node;
     LinearNode _neural_output;
 
@@ -24,9 +24,8 @@ public:
 public:
     void createNodes(int length_upper_bound) {
         _input_nodes.resize(length_upper_bound);
-        _bi_nodes.resize(length_upper_bound);
-        _left_to_right_lstm.resize(length_upper_bound);
-        _right_to_left_lstm.resize(length_upper_bound);
+        _window_builder.resize(length_upper_bound);
+        _uni_nodes.resize(length_upper_bound);
         _max_pool_node.setParam(length_upper_bound);
     }
 
@@ -37,16 +36,12 @@ public:
             n.init(opts.wordDim, opts.dropProb);
             n.setParam(&model.words);
         }
-        _left_to_right_lstm.init(&model.left_to_right_lstm_param,
-                opts.dropProb, true);
-        _right_to_left_lstm.init(&model.right_to_left_lstm_param,
-                opts.dropProb, false);
-        for (BiNode &n : _bi_nodes) {
+        _window_builder.init(opts.wordDim, opts.wordContext);
+        for (UniNode &n : _uni_nodes) {
             n.init(opts.hiddenSize, opts.dropProb);
-            n.setParam(&model.bi_param);
-            n.activate = frelu;
-            n.derivate = drelu;
+            n.setParam(&model.hidden);
         }
+
         _max_pool_node.init(opts.hiddenSize, -1);
         _neural_output.init(opts.labelSize, -1);
         _neural_output.setParam(&model.olayer_linear);
@@ -64,17 +59,15 @@ public:
         std::vector<Node*> input_node_ptrs =
             toPointers<LookupNode, Node>(_input_nodes,
                     feature.m_title_words.size());
-        _left_to_right_lstm.forward(_graph, input_node_ptrs);
-        _right_to_left_lstm.forward(_graph, input_node_ptrs);
-
-        for (int i = 0; i<feature.m_title_words.size(); ++i) {
-            _bi_nodes.at(i).forward(_graph,
-                    &_left_to_right_lstm._hiddens.at(i),
-                    &_right_to_left_lstm._hiddens.at(i));
+        _window_builder.forward(_graph, input_node_ptrs);
+        for (int i = 0; i < feature.m_title_words.size(); ++i) {
+            _uni_nodes.at(i).forward(_graph, &_window_builder._outputs.at(i));
         }
-        std::vector<Node*> bi_node_ptrs = toPointers<BiNode, Node>(_bi_nodes,
+
+        std::vector<Node*> uni_node_ptrs =
+            toPointers<UniNode, Node>(_uni_nodes,
                 feature.m_title_words.size());
-        _max_pool_node.forward(_graph, bi_node_ptrs);
+        _max_pool_node.forward(_graph, uni_node_ptrs);
         _neural_output.forward(_graph, &_max_pool_node);
     }
 };

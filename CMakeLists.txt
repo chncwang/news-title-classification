@@ -3,7 +3,6 @@ PROJECT(N3LDGStanceDetector)
 
 SET(CMAKE_CXX_COMPILER c++)
 
-
 SET(SRC_DIR src)
 
 function(find_mkl)
@@ -58,11 +57,28 @@ else()
 endif()
 add_definitions( -DUSE_FLOAT )
 
+if(USE_CUDA)
+    add_definitions(-DUSE_GPU)
+    include_directories(/usr/local/cuda/samples/common/inc)
+    find_package(CUDA REQUIRED)
+    set(CUDA_TOOLKIT_ROOT_DIR ${CUDA_ROOT})
+    message("CUDA_INCLUDE: " ${CUDA_INCLUDE_DIRS})
+    include_directories(SYSTEM ${CUDA_INCLUDE_DIRS})
+    #list(APPEND CUDA_LIBRARIES /usr/lib64/libpthread.so)
+    MESSAGE("CUDA_LIBRARIES: ${CUDA_LIBRARIES}")
+    list(REMOVE_ITEM CUDA_LIBRARIES -lpthread)
+    set(LIBS ${LIBS} ${CUDA_LIBRARIES})
+    #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DEIGEN_HAS_CUDA_FP16 -DEIGEN_USE_GPU")
+endif()
+
 AUX_SOURCE_DIRECTORY(${SRC_DIR} SRCS)
 AUX_SOURCE_DIRECTORY(${SRC_DIR}/basic SRCS)
 AUX_SOURCE_DIRECTORY(${SRC_DIR}/classifier SRCS)
+if (USE_CUDA)
+    ADD_SUBDIRECTORY(n3ldg_cuda)
+endif()
 ADD_EXECUTABLE(classifier ${SRCS})
-SET(N3LDGSTANCE_DETECTOR_LIB ${LOG4CPLUS_LIB} ${LIBS})
+SET(N3LDGSTANCE_DETECTOR_LIB ${lIBS})
 TARGET_LINK_LIBRARIES(classifier ${N3LDGSTANCE_DETECTOR_LIB})
 
 INCLUDE_DIRECTORIES(eigen N3LDG ${SRC_DIR}/basic ${SRC_DIR}/classifier/model)

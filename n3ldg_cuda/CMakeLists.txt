@@ -19,7 +19,7 @@ endif()
 
 SET(CUDA_PROPAGATE_HOST_FLAGS OFF)
 
-cuda_add_library(n3ldg_cuda n3ldg_cuda.cuh)
+cuda_add_library(n3ldg_cuda n3ldg_cuda.cu)
 cuda_add_cublas_to_target(n3ldg_cuda)
 target_link_libraries(n3ldg_cuda ${LIBS})
 SET(LIBS ${LIBS} n3ldg_cuda)

@@ -81,4 +81,4 @@ ADD_EXECUTABLE(classifier ${SRCS})
 SET(N3LDGSTANCE_DETECTOR_LIB ${lIBS})
 TARGET_LINK_LIBRARIES(classifier ${N3LDGSTANCE_DETECTOR_LIB})
 
-INCLUDE_DIRECTORIES(eigen N3LDG ${SRC_DIR}/basic ${SRC_DIR}/classifier/model)
+INCLUDE_DIRECTORIES(eigen N3LDG ${SRC_DIR}/basic ${SRC_DIR}/classifier/model n3ldg_cuda)

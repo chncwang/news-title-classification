@@ -93,7 +93,7 @@ void Classifier::convert2Example(const Instance *pInstance, Example &exam) {
 }
 
 void Classifier::initialExamples(const vector<Instance> &vecInsts,
-    vector<Example> &vecExams) {
+        vector<Example> &vecExams) {
     int numInstance;
     for (numInstance = 0; numInstance < vecInsts.size(); numInstance++) {
         const Instance *pInstance = &vecInsts[numInstance];
@@ -104,8 +104,8 @@ void Classifier::initialExamples(const vector<Instance> &vecInsts,
 }
 
 void Classifier::train(const string &trainFile, const string &devFile,
-    const string &testFile, const string &modelFile,
-    const string &optionFile) {
+        const string &testFile, const string &modelFile,
+        const string &optionFile) {
     if (optionFile != "")
         m_options.load(optionFile);
     m_options.showOptions();
@@ -138,10 +138,10 @@ void Classifier::train(const string &trainFile, const string &devFile,
 
     if (m_options.wordFile != "") {
         m_driver._modelparams.words.initial(&m_driver._modelparams.wordAlpha,
-            m_options.wordFile, m_options.wordEmbFineTune);
+                m_options.wordFile, m_options.wordEmbFineTune);
     } else {
         m_driver._modelparams.words.initial(&m_driver._modelparams.wordAlpha,
-            m_options.wordEmbSize, m_options.wordEmbFineTune);
+                m_options.wordEmbSize, m_options.wordEmbFineTune);
     }
 
     m_driver._hyperparams.setRequared(m_options);
@@ -259,27 +259,6 @@ Category Classifier::predict(const Feature &feature, int excluded_class) {
     Category category;
     m_driver.predict(feature, category, excluded_class);
     return category;
-}
-
-void Classifier::loadModelFile(const string &inputModelFile) {
-    ifstream is(inputModelFile);
-    if (is.is_open()) {
-        m_driver._hyperparams.loadModel(is);
-        m_driver._modelparams.loadModel(is);
-        is.close();
-    } else
-        std::cout << "load model error" << endl;
-}
-
-void Classifier::writeModelFile(const string &outputModelFile) {
-    ofstream os(outputModelFile);
-    if (os.is_open()) {
-        m_driver._hyperparams.saveModel(os);
-        m_driver._modelparams.saveModel(os);
-        os.close();
-        std::cout << "write model ok. " << endl;
-    } else
-        std::cout << "open output file error" << endl;
 }
 
 //int main(int argc, char *argv[]) {

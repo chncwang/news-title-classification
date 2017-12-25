@@ -30,10 +30,6 @@ public:
 
     void train(const string& trainFile, const string& devFile, const string& testFile, const string& modelFile, const string& optionFile);
     Category predict(const Feature& feature, int excludedClass);
-
-    void writeModelFile(const string& outputModelFile);
-    void loadModelFile(const string& inputModelFile);
-
 };
 
 #endif /* SRC_NNCNNLabeler_H_ */

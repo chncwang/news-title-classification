@@ -3,10 +3,8 @@
 
 #include "ModelParams.h"
 #include "Utf.h"
-#include "LSTM1.h"
 #include "MyLib.h"
 #include "Concat.h"
-#include "BiOP.h"
 #include "UniOP.h"
 
 class GraphBuilder {
@@ -21,7 +19,10 @@ public:
     ModelParams *_modelParams;
     const static int max_sentence_length = 1024;
 
-public:
+    GraphBuilder() = default;
+    GraphBuilder(const GraphBuilder&) = default;
+    GraphBuilder(GraphBuilder&&) = default;
+
     void createNodes(int length_upper_bound) {
         _input_nodes.resize(length_upper_bound);
         _window_builder.resize(length_upper_bound);
@@ -29,7 +30,6 @@ public:
         _max_pool_node.setParam(length_upper_bound);
     }
 
-public:
     void initial(Graph *pcg, ModelParams &model, HyperParams &opts) {
         _graph = pcg;
         for (LookupNode &n : _input_nodes) {
@@ -48,7 +48,6 @@ public:
         _modelParams = &model;
     }
 
-public:
     inline void forward(const Feature &feature, bool bTrain = false) {
         _graph->train = bTrain;
         for (int i = 0; i < feature.m_title_words.size(); ++i) {

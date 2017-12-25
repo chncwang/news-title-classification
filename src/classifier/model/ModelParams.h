@@ -3,8 +3,6 @@
 
 #include "HyperParams.h"
 #include "MySoftMaxLoss.h"
-#include "LSTM1.h"
-#include "BiOP.h"
 
 class ModelParams{
 public:
@@ -40,19 +38,6 @@ public:
         checkgrad.add(&olayer_linear.b, "output layer W");
         checkgrad.add(&olayer_linear.W, "output layer W");
     }
-
-    void saveModel(std::ofstream &os) const{
-        wordAlpha.write(os);
-        words.save(os);
-        olayer_linear.save(os);
-    }
-
-    void loadModel(std::ifstream &is){
-        wordAlpha.read(is);
-        words.load(is, &wordAlpha);
-        olayer_linear.load(is);
-    }
-
 };
 
 #endif

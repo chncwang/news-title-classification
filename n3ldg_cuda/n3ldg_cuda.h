@@ -1,11 +1,14 @@
 #ifndef N3LDG_CUDA_N3LDG_CUDA_H
 #define N3LDG_CUDA_N3LDG_CUDA_H
 
+#include "Def.h"
+
 #include <iostream>
 #include <cassert>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
+#include <vector>
 
 namespace n3ldg_cuda {
 
@@ -13,26 +16,32 @@ struct NumberPointerArray {
     dtype **value = NULL;
     int len = 0;
 
+    NumberPointerArray() = default;
+    NumberPointerArray(NumberPointerArray&&) = default;
     NumberPointerArray(const NumberPointerArray &) = delete;
     void init(dtype **host_arr, int len);
     ~NumberPointerArray();
 };
 
 struct IntPointerArray {
-    dtype **value = NULL;
+    int **value = NULL;
     int len = 0;
 
+    IntPointerArray() = default;
+    IntPointerArray(IntPointerArray&&) = default;
     IntPointerArray(const IntPointerArray &) = delete;
-    void init(dtype **host_arr, int len);
+    void init(int **host_arr, int len);
     ~IntPointerArray();
 };
 
 struct IntArray {
     int *value = NULL;
-    int size = 0;
+    int len = 0;
 
+    IntArray() = default;
+    IntArray(IntArray&&) = default;
     IntArray(const IntArray &) = delete;
-    void init(dtype **host_arr, int len);
+    void init(int *host_arr, int len);
     ~IntArray();
 };
 
@@ -47,10 +56,6 @@ struct Tensor1D {
     void init(int len);
     ~Tensor1D();
 
-    inline void zero() {
-        if(v)memset((void*)v, 0, dim * sizeof(dtype));;
-    }
-
     const Mat mat() const {
         return Mat(v, dim, 1);
     }
@@ -61,6 +66,11 @@ struct Tensor1D {
 
     const Mat tmat() const {
         return Mat(v, 1, dim);
+    }
+
+    void zero() {
+        assert(v != NULL);
+        memset((void*)v, 0, dim * sizeof(dtype));;
     }
 
     Mat tmat() {
@@ -89,13 +99,13 @@ struct Tensor1D {
         return *this;
     }
 
-    inline Tensor1D& operator=(const vector<dtype> &a) { // assign a to every element
+    inline Tensor1D& operator=(const std::vector<dtype> &a) { // assign a to every element
         for (int i = 0; i < dim; i++)
             v[i] = a[i];
         return *this;
     }
 
-    inline Tensor1D& operator=(const NRVec<dtype> &a) { // assign a to every element
+    inline Tensor1D& operator=(const nr::NRVec<dtype> &a) { // assign a to every element
         for (int i = 0; i < dim; i++)
             v[i] = a[i];
         return *this;
@@ -132,7 +142,8 @@ struct Tensor2D {
     }
 
     void zero() {
-        if(v)memset((void*)v, 0, row * col * sizeof(dtype));;
+        assert(v != NULL);
+        memset((void*)v, 0, row * col * sizeof(dtype));;
     }
 
     const Mat mat() const {
@@ -168,13 +179,13 @@ struct Tensor2D {
         return *this;
     }
 
-    Tensor2D& operator=(const vector<dtype> &a) { // assign a to every element
+    Tensor2D& operator=(const std::vector<dtype> &a) { // assign a to every element
         for (int i = 0; i < size(); i++)
             v[i] = a[i];
         return *this;
     }
 
-    Tensor2D& operator=(const vector<vector<dtype> > &a) { // assign a to every element
+    Tensor2D& operator=(const std::vector<std::vector<dtype> > &a) { // assign a to every element
         int offset = 0;
         for (int i = 0; i < row; i++) {
             for (int j = 0; j < col; j++) {
@@ -185,7 +196,7 @@ struct Tensor2D {
         return *this;
     }
 
-    Tensor2D& operator=(const NRMat<dtype> &a) { // assign a to every element
+    Tensor2D& operator=(const nr::NRMat<dtype> &a) { // assign a to every element
         int offset = 0;
         for (int i = 0; i < row; i++) {
             for (int j = 0; j < col; j++) {

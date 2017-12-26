@@ -1,11 +1,14 @@
-#include "n3ldg_cuda.cuh"
-#include <crand>
+#include "n3ldg_cuda.h"
+#include <cstdlib>
 #include <vector>
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 
 namespace n3ldg_cuda {
 
-typedef float dtype;
+using std::cout;
+using std::endl;
 
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
@@ -21,19 +24,19 @@ void CallCuda(cudaError_t status) {
 
 NumberPointerArray ToNumberPointerArray(const std::vector<dtype*> &vec) {
     NumberPointerArray device_arr;
-    device_arr.init(vec.data(), vec.size());
+    device_arr.init(const_cast<dtype**>(vec.data()), vec.size());
     return device_arr;
 }
 
 IntPointerArray ToIntPointerArray(const std::vector<int*> &vec) {
     IntPointerArray device_arr;
-    device_arr.init(vec.data(), vec.size());
+    device_arr.init(const_cast<int**>(vec.data()), vec.size());
     return device_arr;
 }
 
 IntArray ToIntArray(const std::vector<int> vec) {
     IntArray device_arr;
-    device_arr.init(vec.data(), vec.size());
+    device_arr.init(const_cast<int*>(vec.data()), vec.size());
     return device_arr;
 }
 
@@ -49,9 +52,9 @@ NumberPointerArray::~NumberPointerArray() {
     CallCuda(cudaFree(value));
 }
 
-void IntPointerArray::init(dtype **host_arr, int len) {
-    CallCuda(cudaMalloc(&value, len * sizeof(dtype*)));
-    CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype*),
+void IntPointerArray::init(int **host_arr, int len) {
+    CallCuda(cudaMalloc(&value, len * sizeof(int*)));
+    CallCuda(cudaMemcpy(value, host_arr, len * sizeof(int*),
                 cudaMemcpyHostToDevice));
     this->len = len;
 }
@@ -61,9 +64,9 @@ IntPointerArray::~IntPointerArray() {
     CallCuda(cudaFree(value));
 }
 
-void IntArray::init(dtype **host_arr, int len) {
-    CallCuda(cudaMalloc(&value, len * sizeof(dtype*)));
-    CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype*),
+void IntArray::init(int *host_arr, int len) {
+    CallCuda(cudaMalloc(&value, len * sizeof(int)));
+    CallCuda(cudaMemcpy(value, host_arr, len * sizeof(int),
                 cudaMemcpyHostToDevice));
     this->len = len;
 }
@@ -74,9 +77,10 @@ IntArray::~IntArray() {
 }
 
 void Tensor1D::init(int dim) {
-    CallCuda(cudaMalloc((void**)&value, len * sizeof(dtype)));
+    CallCuda(cudaMalloc((void**)&value, dim * sizeof(dtype)));
     this->dim = dim;
     v = new dtype[dim];
+    zero();
 }
 
 Tensor1D::Tensor1D(const Tensor1D &t) {
@@ -97,6 +101,7 @@ void Tensor2D::init(int row, int col) {
     v = new dtype[row * col];
     this->row = row;
     this->col = col;
+    zero();
 }
 
 Tensor2D::Tensor2D(const Tensor2D &t) {
@@ -148,16 +153,16 @@ void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
 }
 
 __device__ volatile dtype global_sum_temp[100][THREAD_COUNT_PER_BLOCK];
-__device__ volatile int block_nums_in_x[100];
-__device__ volatile int block_num_in_y;
+__device__ int block_nums_in_x[100];
+__device__ int block_num_in_y;
 __device__ volatile dtype global_sum;
 
 __global__ void KernelUpdateAdamBatch(dtype **vals, dtype **grads,
-        dtype ** aux_mean,
-        dtype **aux_square,
+        dtype ** aux_means,
+        dtype **aux_squares,
         int *rows,
         int *cols,
-        int **iters,
+        int *iters,
         dtype belta1,
         dtype belta2,
         dtype alpha,
@@ -222,7 +227,7 @@ __global__ void KernelUpdateAdamBatch(dtype **vals, dtype **grads,
 
         if (threadIdx.x == 0) {
             global_sum_temp[0][blockIdx.y] = sum_temp[0];
-            if (atomicAdd(block_num_in_y, 1) == gridDim.y - 1) {
+            if (atomicAdd(&block_num_in_y, 1) == gridDim.y - 1) {
                 dtype sum = 0;
                 for (int i = 0; i<gridDim.y; ++i) {
                     sum += global_sum_temp[0][i];
@@ -234,28 +239,28 @@ __global__ void KernelUpdateAdamBatch(dtype **vals, dtype **grads,
     __syncthreads();
     int local_global_sum = global_sum;
 
-    if (isnan(local_global_sum) || local_global_sum > max_scale) {
-        abort();
-    }
+    assert(local_global_sum < 1e20);
     dtype norm = cuda_sqrt(local_global_sum);
     if (max_scale > 0 && norm > max_scale) {
         dtype scale = max_scale / norm;
         grad[index] *= scale;
     }
 
-    dtype val = vals[blockIdx.y];
+    dtype* val = vals[blockIdx.y];
     if (index < len) {
         if (col > 1 && row > 1) {
             grad[index] = grad[index] + reg * val[index];
         }
         __syncthreads();
 
+        dtype *aux_mean = aux_means[blockIdx.y];
+        dtype *aux_square = aux_squares[blockIdx.y];
         aux_mean[index] = belta1 * aux_mean[index] + (1-belta1) * grad[index];
         aux_square[index] = belta2 * aux_square[index] + (1 - belta2) *
             grad[index] * grad[index];
 
-        dtype lr_t = alpha * cuda_sqrt(1 - cuda_pow(belta2, iter + 1)) /
-            (1 - cuda_pow(belta1, iter + 1));
+        dtype lr_t = alpha * cuda_sqrt(1 - cuda_pow(belta2, iters[blockIdx.y] + 1)) /
+            (1 - cuda_pow(belta1, iters[blockIdx.y] + 1));
         val[index] = val[index] - aux_mean[index] * lr_t /
             cuda_sqrt(aux_square[index] + eps);
     }
@@ -266,7 +271,7 @@ void UpdateAdamBatch(std::vector<dtype *> &vals, std::vector<dtype *> &grads,
         std::vector<dtype *> &aux_square,
         const std::vector<int> &rows,
         const std::vector<int> &cols,
-        const std::vector<int *> &iters,
+        const std::vector<int> &iters,
         dtype belta1,
         dtype belta2,
         dtype alpha,
@@ -291,7 +296,7 @@ void UpdateAdamBatch(std::vector<dtype *> &vals, std::vector<dtype *> &grads,
     NumberPointerArray grads_arr = ToNumberPointerArray(grads);
     NumberPointerArray aux_mean_arr = ToNumberPointerArray(aux_mean);
     NumberPointerArray aux_square_arr = ToNumberPointerArray(aux_square);
-    IntPointerArray iters_arr = ToIntPointerArray(iters);
+    IntArray iters_arr = ToIntArray(iters);
     IntArray row_arr = ToIntArray(rows);
     IntArray col_arr = ToIntArray(cols);
 
@@ -312,7 +317,7 @@ void UpdateAdamBatch(std::vector<dtype *> &vals, std::vector<dtype *> &grads,
 }
 
 void Random(dtype *v, int len, dtype bound) {
-    float *mem = malloc(len * sizeof(dtype));
+    dtype *mem = (dtype*)malloc(len * sizeof(dtype));
     assert(mem != NULL);
     dtype min = -bound, max = bound;
     for (int i = 0; i < len; i++) {

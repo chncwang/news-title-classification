@@ -24,13 +24,16 @@ void CallCuda(cudaError_t status) {
     }
 }
 
+void CallCublas(cublasStatus_t status) {
+    assert(status == CUBLAS_STATUS_SUCCESS);
+}
+
 cublasHandle_t& GetCublasHandle() {
     static cublasHandle_t handle;
     static bool init;
     if (!init) {
         init = true;
-        cublasStatus_t stat = cublasCreate(&handle);
-        assert(stat == CUBLAS_STATUS_SUCCESS);
+        CallCublas(cublasCreate(&handle));
     }
     return handle;
 }
@@ -337,40 +340,6 @@ __global__ void PrintNums(dtype* p, int len) {
     printf("\n");
 }
 
-void MatrixMultiplyVectorBatched(const std::vector<dtype*>& Ws,
-        const NumberPointerArray &xs,
-        const NumberPointerArray &ys,
-        int row,
-        int col,
-        bool useb) {
-    int count = Ws.size();
-    std::cout << "count:" << count << std::endl;
-    assert(xs.size() == count && ys.size() == count);
-    NumberPointerArray Ws_arr = ToNumberPointerArray(Ws);
-
-    cublasHandle_t &handle = GetCublasHandle();
-    float alpha = 1;
-    float beta = useb? 1 : 0;
-#if USE_FLOAT
-    cublasSgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, 1, col, &alpha, (const float**)Ws_arr.value,
-                row,
-                (const float **)xs.value,
-                col,
-                &beta,
-                ys.value,
-                col,
-                count);
-#else
-    cublasDgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, 1, col, &alpha, (const double**)Ws_arr.value,
-                row,
-                (const double **)xs.value,
-                col,
-                &beta,
-                ys.value,
-                col,
-                count);
-#endif
-}
 
 void InitCuda() {
     cudaSetDevice(1);
@@ -392,20 +361,73 @@ void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count, i
                 src, dest, count, len);
 }
 
-__global__ void Tanh(const dtype *src, dtype**dest, int count, int len) {
+__global__ void Tanh(const dtype *src, dtype**dest, dtype* dest2, int count, int len) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < len * count) {
         int count_i = index / len;
         int len_i = index % len;
-        dest[count_i][len_i] = cuda_tanh(src[index]);
+        dtype result = cuda_tanh(src[index]);
+        dest[count_i][len_i] = result;
+        dest2[index] = result;
     }
 }
 
-void Tanh(const dtype *src, const std::vector<dtype*>& dest, int len) {
+void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2, int len) {
     int count = dest.size();
     NumberPointerArray dest_arr = ToNumberPointerArray(dest);
     Tanh<<<(len * count - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK,
-    THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, count, len);
+    THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, dest2, count, len);
+}
+
+__global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
+        dtype* xs_dest,
+        dtype* b_dest,
+        int count,
+        int x_len,
+        int b_len) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int x_total_len = count * x_len;
+    if (index < x_total_len) {
+        int count_i = index / x_len;
+        int len_i = index % x_len;
+        xs_dest[index] = xs[count_i][len_i];
+    } else if (index < x_total_len + count * b_len) {
+        int b_index = index - x_total_len;
+        int len_i = b_index % b_len;
+        b_dest[b_index] = b[len_i];
+    }
+}
+
+void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
+        dtype* xs_dest,
+        dtype* b_dest,
+        int count,
+        int x_len,
+        int b_len) {
+    int len = x_len + b_len;
+    int block_count = (count * len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK;
+    NumberPointerArray xs_arr = ToNumberPointerArray(xs);
+    KernelCopyForUniNodeForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>((const dtype**)xs_arr.value,
+            (const dtype*)b, xs_dest,
+            b_dest,
+            count,
+            x_len,
+            b_len);
+}
+
+void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col, int count, bool useb) {
+    cublasHandle_t &handle = GetCublasHandle();
+    float alpha = 1;
+    float beta = useb? 1 : 0;
+#if USE_FLOAT
+    CallCublas(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, count, col, &alpha, W, row, x, col, &beta,
+            y,
+            row));
+#else
+    CallCublas(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, count, col, &alpha, W, row, x, col, &beta,
+            y,
+            row));
+#endif
 }
 
 }

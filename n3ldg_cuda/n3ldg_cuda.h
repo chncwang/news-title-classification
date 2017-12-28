@@ -267,17 +267,20 @@ void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
 void RescaleGrads(std::vector<dtype *> &grads, const std::vector<int> &lens,
         dtype max_scale);
 
-void MatrixMultiplyVectorBatched(const std::vector<dtype*> &Ws,
-        const NumberPointerArray &xs,
-        const NumberPointerArray &ys,
-        int row,
-        int col,
-        bool useb);
 void InitCuda();
 void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
         int len);
-void Tanh(const dtype *src, const std::vector<dtype*>& dest, int len);
+void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2, int len);
 NumberPointerArray ToNumberPointerArray(const std::vector<dtype*> &vec);
+void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
+        dtype* xs_dest,
+        dtype* b_dest,
+        int count,
+        int x_len,
+        int b_len);
+void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
+        int count,
+        bool useb);
 
 }
 

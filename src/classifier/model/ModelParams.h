@@ -20,7 +20,7 @@ public:
         }
         opts.wordDim = words.nDim;
         opts.labelSize = 32;
-        hidden.initial(opts.hiddenSize, 1 + 2 * opts.wordDim, true);
+        hidden.initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.wordDim, true);
         olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
         return true;
     }

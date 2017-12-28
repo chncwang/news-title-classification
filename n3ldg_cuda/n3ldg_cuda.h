@@ -9,6 +9,7 @@
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
 #include <vector>
+#include <cmath>
 
 namespace n3ldg_cuda {
 
@@ -123,6 +124,15 @@ struct Tensor1D {
             v[i] =  (dtype(rand()) / RAND_MAX) * (max - min) + min;
         }
     }
+
+    void verify() {
+        for (int i = 0; i < dim; ++i) {
+            assert(abs(v[i] - value[i]) < 0.01);
+        }
+    }
+
+    void copyFromHostToDevice();
+    void copyFromDeviceToHost();
 };
 
 struct Tensor2D {
@@ -235,10 +245,40 @@ struct Tensor2D {
             }
         }
     }
+
+    void verify() {
+        for (int i = 0; i < size(); ++i) {
+            assert(abs(v[i] - value[i]) < 0.01);
+        }
+    }
+
+    void copyFromHostToDevice();
+    void copyFromDeviceToHost();
 };
 
 void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
-        Tensor2D &aux_square, int &iter, dtype belta1, dtype belta2, dtype alpha, dtype reg, dtype eps);
+        Tensor2D &aux_square,
+        int &iter,
+        dtype belta1,
+        dtype belta2,
+        dtype alpha,
+        dtype reg,
+        dtype eps);
+void RescaleGrads(std::vector<dtype *> &grads, const std::vector<int> &lens,
+        dtype max_scale);
+
+void MatrixMultiplyVectorBatched(const std::vector<dtype*> &Ws,
+        const NumberPointerArray &xs,
+        const NumberPointerArray &ys,
+        int row,
+        int col,
+        bool useb);
+void InitCuda();
+void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
+        int len);
+void Tanh(const dtype *src, const std::vector<dtype*>& dest, int len);
+NumberPointerArray ToNumberPointerArray(const std::vector<dtype*> &vec);
+
 }
 
 #endif

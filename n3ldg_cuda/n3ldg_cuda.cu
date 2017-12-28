@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cublas_v2.h>
 
 namespace n3ldg_cuda {
 
@@ -12,6 +13,7 @@ using std::endl;
 
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
+#define cuda_tanh(x) tanh(x)
 
 constexpr int THREAD_COUNT_PER_BLOCK = 1024;
 
@@ -20,6 +22,17 @@ void CallCuda(cudaError_t status) {
         cout << cudaGetErrorString(status) << endl;
         abort();
     }
+}
+
+cublasHandle_t& GetCublasHandle() {
+    static cublasHandle_t handle;
+    static bool init;
+    if (!init) {
+        init = true;
+        cublasStatus_t stat = cublasCreate(&handle);
+        assert(stat == CUBLAS_STATUS_SUCCESS);
+    }
+    return handle;
 }
 
 NumberPointerArray ToNumberPointerArray(const std::vector<dtype*> &vec) {
@@ -77,7 +90,13 @@ IntArray::~IntArray() {
 }
 
 void Tensor1D::init(int dim) {
+#if N3LDG_DEBUG
+   // CallCuda(cudaHostAlloc((void**)&value, dim * sizeof(dtype),
+   //             cudaHostAllocDefault));
     CallCuda(cudaMalloc((void**)&value, dim * sizeof(dtype)));
+#else
+    CallCuda(cudaMalloc((void**)&value, dim * sizeof(dtype)));
+#endif
     this->dim = dim;
     v = new dtype[dim];
     zero();
@@ -96,8 +115,24 @@ Tensor1D::~Tensor1D() {
     delete []v;
 }
 
+void Tensor1D::copyFromHostToDevice() {
+    assert(v != NULL);
+    assert(value != NULL);
+    CallCuda(cudaMemcpy(value, v, dim * sizeof(dtype), cudaMemcpyHostToDevice));
+}
+
+void Tensor1D::copyFromDeviceToHost() {
+    CallCuda(cudaMemcpy(v, value, dim * sizeof(dtype), cudaMemcpyDeviceToHost));
+}
+
 void Tensor2D::init(int row, int col) {
+#if N3LDG_DEBUG
+   // CallCuda(cudaHostAlloc((void**)&value, row * col * sizeof(dtype),
+   //             cudaHostAllocDefault));
     CallCuda(cudaMalloc((void**)&value, row * col * sizeof(dtype)));
+#else
+    CallCuda(cudaMalloc((void**)&value, row * col * sizeof(dtype)));
+#endif
     v = new dtype[row * col];
     this->row = row;
     this->col = col;
@@ -116,6 +151,14 @@ Tensor2D::~Tensor2D() {
     assert(value != NULL && v != NULL);
     CallCuda(cudaFree(value));
     delete [] v;
+}
+
+void Tensor2D::copyFromHostToDevice() {
+    CallCuda(cudaMemcpy(value, v, size() * sizeof(dtype), cudaMemcpyHostToDevice));
+}
+
+void Tensor2D::copyFromDeviceToHost() {
+    CallCuda(cudaMemcpy(v, value, size() * sizeof(dtype), cudaMemcpyDeviceToHost));
 }
 
 __global__ void KernelUpdateAdam(dtype *val,  dtype *grad,
@@ -157,17 +200,7 @@ __device__ int block_nums_in_x[100];
 __device__ int block_num_in_y;
 __device__ volatile dtype global_sum;
 
-__global__ void KernelUpdateAdamBatch(dtype **vals, dtype **grads,
-        dtype ** aux_means,
-        dtype **aux_squares,
-        int *rows,
-        int *cols,
-        int *iters,
-        dtype belta1,
-        dtype belta2,
-        dtype alpha,
-        dtype reg,
-        dtype eps,
+__global__ void KernelRescaleGrads(dtype **grads, int *lens,
         dtype max_scale) {
     __shared__ volatile dtype sum_temp[THREAD_COUNT_PER_BLOCK];
     __shared__ volatile bool is_last_block_in_x;
@@ -177,8 +210,6 @@ __global__ void KernelUpdateAdamBatch(dtype **vals, dtype **grads,
     }
 
     dtype *grad = grads[blockIdx.y];
-    dtype row = rows[blockIdx.y];
-    dtype col = cols[blockIdx.y];
     int index = threadIdx.x + blockIdx.x * blockDim.x;
     if (index == 0) {
         block_nums_in_x[blockIdx.y] = 0;
@@ -186,7 +217,7 @@ __global__ void KernelUpdateAdamBatch(dtype **vals, dtype **grads,
             block_num_in_y = 0;
         }
     }
-    int len = row * col;
+    int len = lens[blockIdx.y];
     if (index < len) {
         dtype grad_val = grad[index];
         sum_temp[threadIdx.x] = grad_val * grad_val;
@@ -245,75 +276,25 @@ __global__ void KernelUpdateAdamBatch(dtype **vals, dtype **grads,
         dtype scale = max_scale / norm;
         grad[index] *= scale;
     }
-
-    dtype* val = vals[blockIdx.y];
-    if (index < len) {
-        if (col > 1 && row > 1) {
-            grad[index] = grad[index] + reg * val[index];
-        }
-        __syncthreads();
-
-        dtype *aux_mean = aux_means[blockIdx.y];
-        dtype *aux_square = aux_squares[blockIdx.y];
-        aux_mean[index] = belta1 * aux_mean[index] + (1-belta1) * grad[index];
-        aux_square[index] = belta2 * aux_square[index] + (1 - belta2) *
-            grad[index] * grad[index];
-
-        dtype lr_t = alpha * cuda_sqrt(1 - cuda_pow(belta2, iters[blockIdx.y] + 1)) /
-            (1 - cuda_pow(belta1, iters[blockIdx.y] + 1));
-        val[index] = val[index] - aux_mean[index] * lr_t /
-            cuda_sqrt(aux_square[index] + eps);
-    }
 }
 
-void UpdateAdamBatch(std::vector<dtype *> &vals, std::vector<dtype *> &grads,
-        std::vector<dtype *> &aux_mean,
-        std::vector<dtype *> &aux_square,
-        const std::vector<int> &rows,
-        const std::vector<int> &cols,
-        const std::vector<int> &iters,
-        dtype belta1,
-        dtype belta2,
-        dtype alpha,
-        dtype reg,
-        dtype eps,
+void RescaleGrads(std::vector<dtype *> &grads, const std::vector<int> &lens,
         dtype max_scale) {
-    assert(grads.size() == vals.size() && vals.size() == aux_mean.size()
-            && vals.size() == aux_square.size() &&
-            vals.size() == iters.size() && vals.size() == rows.size()
-            && vals.size() == cols.size());
-    assert(vals.size() <= 100);
-    int max_col = *std::max_element(cols.begin(), cols.end());
-    int max_row = *std::max_element(rows.begin(), rows.end());
-    assert(max_col * max_row <
-            THREAD_COUNT_PER_BLOCK * THREAD_COUNT_PER_BLOCK);
+    assert(grads.size() == lens.size());
+    assert(grads.size() <= 100);
+    int max_len = *std::max_element(lens.begin(), lens.end());
+    std::cout << "max_len:" << max_len << std::endl;
+    assert(max_len < THREAD_COUNT_PER_BLOCK * THREAD_COUNT_PER_BLOCK);
 
-    int block_count = (max_col *max_row - 1 + THREAD_COUNT_PER_BLOCK) /
+    int block_count = (max_len - 1 + THREAD_COUNT_PER_BLOCK) /
         THREAD_COUNT_PER_BLOCK;
-    dim3 block_dim(block_count, vals.size(), 1);
+    dim3 block_dim(block_count, grads.size(), 1);
 
-    NumberPointerArray vals_arr = ToNumberPointerArray(vals);
     NumberPointerArray grads_arr = ToNumberPointerArray(grads);
-    NumberPointerArray aux_mean_arr = ToNumberPointerArray(aux_mean);
-    NumberPointerArray aux_square_arr = ToNumberPointerArray(aux_square);
-    IntArray iters_arr = ToIntArray(iters);
-    IntArray row_arr = ToIntArray(rows);
-    IntArray col_arr = ToIntArray(cols);
+    IntArray len_arr = ToIntArray(lens);
 
-    KernelUpdateAdamBatch<<<block_dim, THREAD_COUNT_PER_BLOCK>>>(
-            vals_arr.value,
-            grads_arr.value,
-            aux_mean_arr.value,
-            aux_square_arr.value,
-            row_arr.value,
-            col_arr.value,
-            iters_arr.value,
-            belta1,
-            belta2,
-            alpha,
-            reg,
-            eps,
-            max_scale);
+    KernelRescaleGrads<<<block_dim, THREAD_COUNT_PER_BLOCK>>>(grads_arr.value,
+            len_arr.value, max_scale);
 }
 
 void Random(dtype *v, int len, dtype bound) {
@@ -341,6 +322,90 @@ void Zero(dtype *v, int len) {
     int block_count = (len - 1 + THREAD_COUNT_PER_BLOCK) /
         THREAD_COUNT_PER_BLOCK;
     KernelZero<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, len);
+}
+
+__global__ void PrintPointers(void **p, int len) {
+    for (int i = 0; i < len; ++i) {
+        printf("%p\n", p[i]);
+    }
+}
+
+__global__ void PrintNums(dtype* p, int len) {
+    for (int i = 0; i < len; ++i) {
+        printf("%f,", p[i]);
+    }
+    printf("\n");
+}
+
+void MatrixMultiplyVectorBatched(const std::vector<dtype*>& Ws,
+        const NumberPointerArray &xs,
+        const NumberPointerArray &ys,
+        int row,
+        int col,
+        bool useb) {
+    int count = Ws.size();
+    std::cout << "count:" << count << std::endl;
+    assert(xs.size() == count && ys.size() == count);
+    NumberPointerArray Ws_arr = ToNumberPointerArray(Ws);
+
+    cublasHandle_t &handle = GetCublasHandle();
+    float alpha = 1;
+    float beta = useb? 1 : 0;
+#if USE_FLOAT
+    cublasSgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, 1, col, &alpha, (const float**)Ws_arr.value,
+                row,
+                (const float **)xs.value,
+                col,
+                &beta,
+                ys.value,
+                col,
+                count);
+#else
+    cublasDgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, 1, col, &alpha, (const double**)Ws_arr.value,
+                row,
+                (const double **)xs.value,
+                col,
+                &beta,
+                ys.value,
+                col,
+                count);
+#endif
+}
+
+void InitCuda() {
+    cudaSetDevice(1);
+}
+
+__global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
+        dtype *dest, int count, int len) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < len * count) {
+        int count_i = index / len;
+        int len_i = index % len;
+        dest[count_i * len + len_i] = src[len_i];
+    }
+}
+
+void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count, int len) {
+    KernelCopyFromOneVectorToMultiVectors<<<
+        (len * count - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK, THREAD_COUNT_PER_BLOCK>>>(
+                src, dest, count, len);
+}
+
+__global__ void Tanh(const dtype *src, dtype**dest, int count, int len) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < len * count) {
+        int count_i = index / len;
+        int len_i = index % len;
+        dest[count_i][len_i] = cuda_tanh(src[index]);
+    }
+}
+
+void Tanh(const dtype *src, const std::vector<dtype*>& dest, int len) {
+    int count = dest.size();
+    NumberPointerArray dest_arr = ToNumberPointerArray(dest);
+    Tanh<<<(len * count - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK,
+    THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, count, len);
 }
 
 }

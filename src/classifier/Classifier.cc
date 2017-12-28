@@ -6,6 +6,7 @@
 #include "Argument_helper.h"
 #include "Reader.h"
 #include "DomainLoss.h"
+#include "n3ldg_cuda.h"
 
 Classifier::Classifier(int memsize) : m_driver(memsize) {
     srand(0);
@@ -275,6 +276,9 @@ Category Classifier::predict(const Feature &feature, int excluded_class) {
 //}
 
 int main(int argc, char *argv[]) {
+#if USE_GPU
+    n3ldg_cuda::InitCuda();
+#endif
     std::string trainFile = "", devFile = "", testFile = "", modelFile = "", optionFile = "";
     std::string outputFile = "";
     bool bTrain = false;

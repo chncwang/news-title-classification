@@ -6,7 +6,9 @@
 #include "Argument_helper.h"
 #include "Reader.h"
 #include "DomainLoss.h"
+#if USE_GPU
 #include "n3ldg_cuda.h"
+#endif
 
 Classifier::Classifier(int memsize) : m_driver(memsize) {
     srand(0);
@@ -197,6 +199,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
         std::cout << "Train finished. Total time taken is: "
             << std::chrono::duration<double>(time_end - time_start).count()
             << "s" << std::endl;
+        exit(0);
         float accuracy = metric.getAccuracy();
         std::cout << "train set acc:" << metric.getAccuracy() << std::endl;
         if (accuracy >= 0.95) {

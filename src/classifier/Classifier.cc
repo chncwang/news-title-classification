@@ -233,6 +233,13 @@ void Classifier::train(const string &trainFile, const string &devFile,
         for (int idx = 0; idx < testExamples.size(); idx++) {
             int excluded_class = -1;
             Category category = predict(testExamples[idx].m_feature, excluded_class);
+            if (category != testInsts[idx].m_category) {
+                for (const std::string &str : testInsts[idx].m_title_words) {
+                    std::cout << str << " ";
+                }
+                std::cout << "predict:" << category << "gold:" <<
+                    testInsts[idx].m_category <<  std::endl;
+            }
 
             testInsts[idx].evaluate(category, test_metric);
         }

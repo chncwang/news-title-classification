@@ -7,6 +7,7 @@
 #include <cublas_v2.h>
 #include "cuPrintf.cuh"
 #include "cuPrintf.cu"
+#include "memory_pool.h"
 
 namespace n3ldg_cuda {
 
@@ -71,7 +72,7 @@ IntArray ToIntArray(const std::vector<int> vec) {
 }
 
 void NumberPointerArray::init(dtype **host_arr, int len) {
-    CallCuda(cudaMalloc(&value, len * sizeof(dtype*)));
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(dtype*)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype*),
                 cudaMemcpyHostToDevice));
     this->len = len;
@@ -83,7 +84,7 @@ NumberPointerArray::~NumberPointerArray() {
 }
 
 void NumberArray::init(dtype *host_arr, int len) {
-    CallCuda(cudaMalloc(&value, len * sizeof(dtype)));
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(dtype)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype),
                 cudaMemcpyHostToDevice));
     this->len = len;
@@ -95,7 +96,7 @@ NumberArray::~NumberArray() {
 }
 
 void IntPointerArray::init(int **host_arr, int len) {
-    CallCuda(cudaMalloc(&value, len * sizeof(int*)));
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(int*)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(int*),
                 cudaMemcpyHostToDevice));
     this->len = len;
@@ -107,7 +108,7 @@ IntPointerArray::~IntPointerArray() {
 }
 
 void IntArray::init(int *host_arr, int len) {
-    CallCuda(cudaMalloc(&value, len * sizeof(int)));
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(int)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(int),
                 cudaMemcpyHostToDevice));
     this->len = len;
@@ -119,7 +120,7 @@ IntArray::~IntArray() {
 }
 
 void Tensor1D::init(int dim) {
-    CallCuda(cudaMalloc((void**)&value, dim * sizeof(dtype)));
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, dim * sizeof(dtype)));
     this->dim = dim;
     v = new dtype[dim];
     zero();
@@ -149,7 +150,7 @@ void Tensor1D::copyFromDeviceToHost() {
 }
 
 void Tensor2D::init(int row, int col) {
-    CallCuda(cudaMalloc((void**)&value, row * col * sizeof(dtype)));
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, row * col * sizeof(dtype)));
     v = new dtype[row * col];
     this->row = row;
     this->col = col;
@@ -472,6 +473,28 @@ void Verify(dtype *host, dtype *device, int len) {
             len);
     cudaDeviceSynchronize();
     cudaPrintfDisplay(stdout, true);
+}
+
+cudaError_t MemoryPool::Malloc(void **p, int size) {
+    bool found = false;
+    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
+        if (size == it->size) {
+            busy_blocks_.push_back(*it);
+            free_blocks_.erase(it);
+            found = true;
+            break;
+        }
+    }
+
+    cudaError_t status = cudaSuccess;
+    if (!found) {
+        status = cudaMalloc(p, size);
+        assert(status == cudaSuccess);
+        MemoryBlock block(*p, size);
+        busy_blocks_.push_back(block);
+    }
+
+    return status;
 }
 
 }

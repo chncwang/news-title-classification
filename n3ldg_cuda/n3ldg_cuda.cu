@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cublas_v2.h>
+#include "cuPrintf.cuh"
+#include "cuPrintf.cu"
 
 namespace n3ldg_cuda {
 
@@ -14,6 +16,18 @@ using std::endl;
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
 #define cuda_tanh(x) tanh(x)
+
+#define KERNEL_LOG
+
+#ifdef KERNEL_LOG
+#define  KernelPrintLine(format, ...)\
+{\
+    cuPrintf("block:x=%d,y=%d thread:x=%d,y=%d "#format"\n", blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y,\
+            __VA_ARGS__);\
+}
+#else
+#define KernelPrintLine(format, ...)
+#endif
 
 constexpr int THREAD_COUNT_PER_BLOCK = 1024;
 
@@ -68,6 +82,18 @@ NumberPointerArray::~NumberPointerArray() {
     CallCuda(cudaFree(value));
 }
 
+void NumberArray::init(dtype *host_arr, int len) {
+    CallCuda(cudaMalloc(&value, len * sizeof(dtype)));
+    CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype),
+                cudaMemcpyHostToDevice));
+    this->len = len;
+}
+
+NumberArray::~NumberArray() {
+    assert(value != NULL);
+    CallCuda(cudaFree(value));
+}
+
 void IntPointerArray::init(int **host_arr, int len) {
     CallCuda(cudaMalloc(&value, len * sizeof(int*)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(int*),
@@ -93,13 +119,7 @@ IntArray::~IntArray() {
 }
 
 void Tensor1D::init(int dim) {
-#if N3LDG_DEBUG
-   // CallCuda(cudaHostAlloc((void**)&value, dim * sizeof(dtype),
-   //             cudaHostAllocDefault));
     CallCuda(cudaMalloc((void**)&value, dim * sizeof(dtype)));
-#else
-    CallCuda(cudaMalloc((void**)&value, dim * sizeof(dtype)));
-#endif
     this->dim = dim;
     v = new dtype[dim];
     zero();
@@ -129,16 +149,11 @@ void Tensor1D::copyFromDeviceToHost() {
 }
 
 void Tensor2D::init(int row, int col) {
-#if N3LDG_DEBUG
-   // CallCuda(cudaHostAlloc((void**)&value, row * col * sizeof(dtype),
-   //             cudaHostAllocDefault));
     CallCuda(cudaMalloc((void**)&value, row * col * sizeof(dtype)));
-#else
-    CallCuda(cudaMalloc((void**)&value, row * col * sizeof(dtype)));
-#endif
     v = new dtype[row * col];
     this->row = row;
     this->col = col;
+    this->size = row * col;
     zero();
 }
 
@@ -157,11 +172,11 @@ Tensor2D::~Tensor2D() {
 }
 
 void Tensor2D::copyFromHostToDevice() {
-    CallCuda(cudaMemcpy(value, v, size() * sizeof(dtype), cudaMemcpyHostToDevice));
+    CallCuda(cudaMemcpy(value, v, size * sizeof(dtype), cudaMemcpyHostToDevice));
 }
 
 void Tensor2D::copyFromDeviceToHost() {
-    CallCuda(cudaMemcpy(v, value, size() * sizeof(dtype), cudaMemcpyDeviceToHost));
+    CallCuda(cudaMemcpy(v, value, size * sizeof(dtype), cudaMemcpyDeviceToHost));
 }
 
 __global__ void KernelUpdateAdam(dtype *val,  dtype *grad,
@@ -342,7 +357,12 @@ __global__ void PrintNums(dtype* p, int len) {
 
 
 void InitCuda() {
-    cudaSetDevice(1);
+    CallCuda(cudaSetDevice(1));
+    CallCuda(cudaPrintfInit());
+}
+
+void EndCuda() {
+    cudaPrintfEnd();
 }
 
 __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
@@ -364,8 +384,8 @@ void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count, i
 __global__ void Tanh(const dtype *src, dtype**dest, dtype* dest2, int count, int len) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < len * count) {
-        int count_i = index / len;
-        int len_i = index % len;
+        int count_i = index % count;
+        int len_i = index / count;
         dtype result = cuda_tanh(src[index]);
         dest[count_i][len_i] = result;
         dest2[index] = result;
@@ -388,12 +408,12 @@ __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int x_total_len = count * x_len;
     if (index < x_total_len) {
-        int count_i = index / x_len;
-        int len_i = index % x_len;
+        int len_i = index / count;
+        int count_i = index % count;
         xs_dest[index] = xs[count_i][len_i];
     } else if (index < x_total_len + count * b_len) {
         int b_index = index - x_total_len;
-        int len_i = b_index % b_len;
+        int len_i = b_index / count;
         b_dest[b_index] = b[len_i];
     }
 }
@@ -420,14 +440,38 @@ void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col, int co
     float alpha = 1;
     float beta = useb? 1 : 0;
 #if USE_FLOAT
-    CallCublas(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, count, col, &alpha, W, row, x, col, &beta,
+    CallCublas(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, count, row, col, &alpha, x, count, W, col, &beta,
             y,
-            row));
+            count));
 #else
-    CallCublas(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, row, count, col, &alpha, W, row, x, col, &beta,
+    CallCublas(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, count, row, col, &alpha, x, count, W, col, &beta,
             y,
-            row));
+            count));
 #endif
+}
+
+__global__ void KernelVerify(dtype *host, dtype *device, int len) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < len) {
+        dtype loss = host[index] - device[index];
+        if (loss > 0.01 || loss < -0.01) {
+            KernelPrintLine("KernelVerify: host:%f device:%f loss:%f",
+                    host[index],
+                    device[index],
+                    loss);
+        }
+    }
+}
+
+void Verify(dtype *host, dtype *device, int len) {
+    NumberArray arr;
+    arr.init(host, len);
+    int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
+        THREAD_COUNT_PER_BLOCK;
+    KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
+            len);
+    cudaDeviceSynchronize();
+    cudaPrintfDisplay(stdout, true);
 }
 
 }

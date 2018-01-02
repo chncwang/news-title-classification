@@ -24,6 +24,17 @@ struct NumberPointerArray {
     ~NumberPointerArray();
 };
 
+struct NumberArray {
+    dtype *value = NULL;
+    int len = 0;
+
+    NumberArray() = default;
+    NumberArray(NumberArray&&) = default;
+    NumberArray(const NumberArray &) = delete;
+    void init(dtype *host_arr, int len);
+    ~NumberArray();
+};
+
 struct IntPointerArray {
     int **value = NULL;
     int len = 0;
@@ -46,6 +57,8 @@ struct IntArray {
     ~IntArray();
 };
 
+void Verify(dtype *host, dtype* device, int len);
+
 struct Tensor1D {
     dtype *value = NULL;
     dtype *v = NULL;
@@ -56,6 +69,12 @@ struct Tensor1D {
     Tensor1D(Tensor1D &&) = default;
     void init(int len);
     ~Tensor1D();
+
+    void save(std::ofstream &s) const {
+    }
+
+    void load(std::ifstream &s) {
+    }
 
     const Mat mat() const {
         return Mat(v, dim, 1);
@@ -126,9 +145,7 @@ struct Tensor1D {
     }
 
     void verify() {
-        for (int i = 0; i < dim; ++i) {
-            assert(abs(v[i] - value[i]) < 0.01);
-        }
+        Verify(v, value, dim);
     }
 
     void copyFromHostToDevice();
@@ -140,6 +157,7 @@ struct Tensor2D {
     dtype *v = NULL;
     int row = 0;
     int col = 0;
+    int size = 0;
 
     Tensor2D() = default;
     Tensor2D(const Tensor2D &);
@@ -147,8 +165,26 @@ struct Tensor2D {
     void init(int row, int col);
     ~Tensor2D();
 
-    int size() const {
-        return row * col;
+    void save(std::ofstream &s) const {
+    }
+
+    void load(std::ifstream &s) {
+    }
+
+    // for embeddings only, embedding matrix: vocabulary  * dim
+    // each word's embedding is notmalized
+    inline void norm2one(dtype norm = 1.0) {
+        dtype sum;
+        for (int idx = 0; idx < row; idx++) {
+            sum = 0.000001;
+            for (int idy = 0; idy < col; idy++) {
+                sum += (*this)[idx][idy] * (*this)[idx][idy];
+            }
+            dtype scale = sqrt(norm / sum);
+            for (int idy = 0; idy < col; idy++) {
+                (*this)[idx][idy] *= scale;
+            }
+        }
     }
 
     void zero() {
@@ -165,32 +201,32 @@ struct Tensor2D {
     }
 
     const Vec vec() const {
-        return Vec(v, size());
+        return Vec(v, size);
     }
 
     Vec vec() {
-        return Vec(v, size());
+        return Vec(v, size);
     }
 
 
     //use it carefully, first col, then row, because rows are allocated successively
-    dtype* operator[](const int icol) {
-        return &(v[icol*row]);  // no boundary check?
+    dtype* operator[](const int irow) {
+        return &(v[irow*col]);  // no boundary check?
     }
 
-    const dtype* operator[](const int icol) const {
-        return &(v[icol*row]);  // no boundary check?
+    const dtype* operator[](const int irow) const {
+        return &(v[irow*col]);  // no boundary check?
     }
 
     //use it carefully
     Tensor2D& operator=(const dtype &a) { // assign a to every element
-        for (int i = 0; i < size(); i++)
+        for (int i = 0; i < size; i++)
             v[i] = a;
         return *this;
     }
 
     Tensor2D& operator=(const std::vector<dtype> &a) { // assign a to every element
-        for (int i = 0; i < size(); i++)
+        for (int i = 0; i < size; i++)
             v[i] = a[i];
         return *this;
     }
@@ -218,14 +254,14 @@ struct Tensor2D {
     }
 
     Tensor2D& operator=(const Tensor2D &a) { // assign a to every element
-        for (int i = 0; i < size(); i++)
+        for (int i = 0; i < size; i++)
             v[i] = a.v[i];
         return *this;
     }
 
     void random(dtype bound) {
         dtype min = -bound, max = bound;
-        for (int i = 0; i < size(); i++) {
+        for (int i = 0; i < size; i++) {
             v[i] =  (dtype(rand()) / RAND_MAX) * (max - min) + min;
         }
     }
@@ -247,9 +283,7 @@ struct Tensor2D {
     }
 
     void verify() {
-        for (int i = 0; i < size(); ++i) {
-            assert(abs(v[i] - value[i]) < 0.01);
-        }
+        Verify(v, value, size);
     }
 
     void copyFromHostToDevice();
@@ -268,6 +302,7 @@ void RescaleGrads(std::vector<dtype *> &grads, const std::vector<int> &lens,
         dtype max_scale);
 
 void InitCuda();
+void EndCuda();
 void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
         int len);
 void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2, int len);
@@ -281,6 +316,7 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
         int count,
         bool useb);
+
 
 }
 

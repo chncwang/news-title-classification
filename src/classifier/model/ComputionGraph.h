@@ -27,7 +27,6 @@ public:
         _input_nodes.resize(length_upper_bound);
         _window_builder.resize(length_upper_bound);
         _uni_nodes.resize(length_upper_bound);
-        _max_pool_node.setParam(length_upper_bound);
     }
 
     void initial(Graph *pcg, ModelParams &model, HyperParams &opts) {

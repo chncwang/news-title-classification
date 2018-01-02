@@ -137,7 +137,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
     initialExamples(testInsts, testExamples);
 
     m_word_stats[unknownkey] = m_options.wordCutOff + 1;
-    m_driver._modelparams.wordAlpha.initial(m_word_stats, m_options.wordCutOff, std::unordered_set<std::string>());
+    m_driver._modelparams.wordAlpha.initial(m_word_stats, m_options.wordCutOff);
 
     if (m_options.wordFile != "") {
         m_driver._modelparams.words.initial(&m_driver._modelparams.wordAlpha,
@@ -157,7 +157,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
     static vector<Example> subExamples;
     int devNum = devExamples.size(), testNum = testExamples.size();
     int non_exceeds_time = 0;
-    for (int iter = 0; iter < m_options.maxIter; ++iter) {
+    for (int iter = 0; iter < 10; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
         for (int i = 0; i < trainExamples.size(); ++i) {
@@ -199,7 +199,6 @@ void Classifier::train(const string &trainFile, const string &devFile,
         std::cout << "Train finished. Total time taken is: "
             << std::chrono::duration<double>(time_end - time_start).count()
             << "s" << std::endl;
-        exit(0);
         float accuracy = metric.getAccuracy();
         std::cout << "train set acc:" << metric.getAccuracy() << std::endl;
         if (accuracy >= 0.95) {
@@ -314,4 +313,7 @@ int main(int argc, char *argv[]) {
         the_classifier.train(trainFile, devFile, testFile, modelFile, optionFile);
     } else {
     }
+#if USE_GPU
+    n3ldg_cuda::EndCuda();
+#endif
 }

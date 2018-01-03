@@ -8,6 +8,7 @@
 #include "cuPrintf.cuh"
 #include "cuPrintf.cu"
 #include "memory_pool.h"
+#include "profiler.h"
 
 namespace n3ldg_cuda {
 
@@ -80,7 +81,7 @@ void NumberPointerArray::init(dtype **host_arr, int len) {
 
 NumberPointerArray::~NumberPointerArray() {
     assert(value != NULL);
-    CallCuda(cudaFree(value));
+    CallCuda(MemoryPool::Ins().Free(value));
 }
 
 void NumberArray::init(dtype *host_arr, int len) {
@@ -92,7 +93,7 @@ void NumberArray::init(dtype *host_arr, int len) {
 
 NumberArray::~NumberArray() {
     assert(value != NULL);
-    CallCuda(cudaFree(value));
+    CallCuda(MemoryPool::Ins().Free(value));
 }
 
 void IntPointerArray::init(int **host_arr, int len) {
@@ -104,7 +105,7 @@ void IntPointerArray::init(int **host_arr, int len) {
 
 IntPointerArray::~IntPointerArray() {
     assert(value != NULL);
-    CallCuda(cudaFree(value));
+    CallCuda(MemoryPool::Ins().Free(value));
 }
 
 void IntArray::init(int *host_arr, int len) {
@@ -116,7 +117,7 @@ void IntArray::init(int *host_arr, int len) {
 
 IntArray::~IntArray() {
     assert(value != NULL);
-    CallCuda(cudaFree(value));
+    CallCuda(MemoryPool::Ins().Free(value));
 }
 
 void Tensor1D::init(int dim) {
@@ -135,7 +136,7 @@ Tensor1D::Tensor1D(const Tensor1D &t) {
 
 Tensor1D::~Tensor1D() {
     assert(value != NULL && v != NULL);
-    CallCuda(cudaFree(value));
+    CallCuda(MemoryPool::Ins().Free(value));
     delete []v;
 }
 
@@ -151,6 +152,7 @@ void Tensor1D::copyFromDeviceToHost() {
 
 void Tensor2D::init(int row, int col) {
     CallCuda(MemoryPool::Ins().Malloc((void**)&value, row * col * sizeof(dtype)));
+    //CallCuda(cudaMalloc((void**)&value, row * col * sizeof(dtype)));
     v = new dtype[row * col];
     this->row = row;
     this->col = col;
@@ -168,7 +170,7 @@ Tensor2D::Tensor2D(const Tensor2D &t) {
 
 Tensor2D::~Tensor2D() {
     assert(value != NULL && v != NULL);
-    CallCuda(cudaFree(value));
+    CallCuda(MemoryPool::Ins().Free(value));
     delete [] v;
 }
 
@@ -364,6 +366,7 @@ void InitCuda() {
 
 void EndCuda() {
     cudaPrintfEnd();
+    Profiler::Ins().Print();
 }
 
 __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
@@ -480,6 +483,7 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
         if (size == it->size) {
             busy_blocks_.push_back(*it);
+            *p = it->p;
             free_blocks_.erase(it);
             found = true;
             break;
@@ -495,6 +499,24 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
     }
 
     return status;
+}
+
+void MemoryPool::FreePool() {
+    if (!busy_blocks_.empty()) {
+        std::cout << "warning: busy_blocks_ not empty size:" << busy_blocks_.size() <<std::endl;
+        for (MemoryBlock &b : busy_blocks_) {
+            CallCuda(cudaFree(b.p));
+        }
+    }
+
+    for (MemoryBlock &b : free_blocks_) {
+        CallCuda(cudaFree(b.p));
+    }
+}
+
+void Profiler::EndCudaEvent() {
+    cudaDeviceSynchronize();
+    EndEvent();
 }
 
 }

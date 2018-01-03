@@ -2,6 +2,7 @@
 #define N3LDG_CUDA_MEMORY_POOL_H
 
 #include <vector>
+#include <list>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
@@ -31,7 +32,7 @@ public:
 
     cudaError_t Malloc(void **p, int size);
 
-    void Free(void *p) {
+    cudaError_t Free(void *p) {
         for (auto it = busy_blocks_.begin(); it != busy_blocks_.end(); ++it) {
             if (p == it->p) {
                 free_blocks_.push_back(*it);
@@ -39,7 +40,10 @@ public:
                 break;
             }
         }
+        return cudaSuccess;
     }
+
+    void FreePool();
 private:
     MemoryPool() = default;
     std::vector<MemoryBlock> free_blocks_;

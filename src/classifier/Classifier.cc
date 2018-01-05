@@ -205,6 +205,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
             std::cout << "train set is good enough, stop" << std::endl;
             exit(0);
         }
+        continue;
 
         float dev_acc = 0.0;
         Metric dev_metric;
@@ -315,5 +316,7 @@ int main(int argc, char *argv[]) {
     }
 #if USE_GPU
     n3ldg_cuda::EndCuda();
+#else
+    n3ldg_cuda::Profiler::Ins().Print();
 #endif
 }

@@ -319,5 +319,10 @@ void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
 
 
 }
+void LtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
+        const dtype *y,
+        dtype *lty,
+        int count,
+        int dim);
 
 #endif

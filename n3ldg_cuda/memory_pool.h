@@ -32,16 +32,7 @@ public:
 
     cudaError_t Malloc(void **p, int size);
 
-    cudaError_t Free(void *p) {
-        for (auto it = busy_blocks_.begin(); it != busy_blocks_.end(); ++it) {
-            if (p == it->p) {
-                free_blocks_.push_back(*it);
-                busy_blocks_.erase(it);
-                break;
-            }
-        }
-        return cudaSuccess;
-    }
+    cudaError_t Free(void *p);
 
     void FreePool();
 private:

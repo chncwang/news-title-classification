@@ -1,3 +1,6 @@
 [submodule "N3LDG"]
 	path = N3LDG
 	url = https://github.com/chncwang/N3LDG
+[submodule "customcnmem"]
+	path = cnmem
+	url = https://github.com/chncwang/cnmem

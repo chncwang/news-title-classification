@@ -9,6 +9,7 @@
 #include "cuPrintf.cu"
 #include "memory_pool.h"
 #include "profiler.h"
+#include "cnmem.h"
 
 namespace n3ldg_cuda {
 
@@ -17,7 +18,7 @@ using std::endl;
 
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
-#define cuda_tanh(x) tanh(x)
+#define cuda_tanh(x) tanhf(x)
 
 #define KERNEL_LOG
 
@@ -32,12 +33,17 @@ using std::endl;
 #endif
 
 constexpr int THREAD_COUNT_PER_BLOCK = 1024;
+constexpr int BLOCK_COUNT = 56;
 
 void CallCuda(cudaError_t status) {
     if (status != cudaSuccess) {
         cout << cudaGetErrorString(status) << endl;
         abort();
     }
+}
+
+void CallCnmem(cnmemStatus_t status) {
+    assert(status == CNMEM_STATUS_SUCCESS);
 }
 
 void CallCublas(cublasStatus_t status) {
@@ -152,7 +158,6 @@ void Tensor1D::copyFromDeviceToHost() {
 
 void Tensor2D::init(int row, int col) {
     CallCuda(MemoryPool::Ins().Malloc((void**)&value, row * col * sizeof(dtype)));
-    //CallCuda(cudaMalloc((void**)&value, row * col * sizeof(dtype)));
     v = new dtype[row * col];
     this->row = row;
     this->col = col;
@@ -360,7 +365,13 @@ __global__ void PrintNums(dtype* p, int len) {
 
 
 void InitCuda() {
-    CallCuda(cudaSetDevice(1));
+    //cudaSetDevice(1);
+
+    cnmemDevice_t device;
+    device.size = 10000000000;
+    device.device = 1;
+    cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
+
     CallCuda(cudaPrintfInit());
 }
 
@@ -387,20 +398,22 @@ void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count, i
 
 __global__ void Tanh(const dtype *src, dtype**dest, dtype* dest2, int count, int len) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index < len * count) {
-        int count_i = index % count;
-        int len_i = index / count;
-        dtype result = cuda_tanh(src[index]);
+    int step = blockDim.x * gridDim.x;
+    for (int i = index; i < len * count; i += step) {
+        int count_i = i % count;
+        int len_i = i / count;
+        dtype result = cuda_tanh(src[i]);
         dest[count_i][len_i] = result;
-        dest2[index] = result;
+        dest2[i] = result;
     }
 }
 
 void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2, int len) {
     int count = dest.size();
     NumberPointerArray dest_arr = ToNumberPointerArray(dest);
-    Tanh<<<(len * count - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK,
-    THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, dest2, count, len);
+    int block_count = std::min((len * count - 1 + THREAD_COUNT_PER_BLOCK) /
+        THREAD_COUNT_PER_BLOCK, BLOCK_COUNT);
+    Tanh<<<block_count, THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, dest2, count, len);
 }
 
 __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
@@ -410,15 +423,17 @@ __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
         int x_len,
         int b_len) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int step = gridDim.x * blockDim.x;
     int x_total_len = count * x_len;
-    if (index < x_total_len) {
-        int len_i = index / count;
-        int count_i = index % count;
-        xs_dest[index] = xs[count_i][len_i];
-    } else if (index < x_total_len + count * b_len) {
-        int b_index = index - x_total_len;
-        int len_i = b_index / count;
-        b_dest[b_index] = b[len_i];
+    for (int i = index; i < x_total_len; i += step) {
+        int len_i = i / count;
+        int count_i = i % count;
+        xs_dest[i] = xs[count_i][len_i];
+    }
+    for (int i = index; i < x_total_len + count * b_len; i += step) {
+        int b_i = i - x_total_len;
+        int len_i = b_i / count;
+        b_dest[b_i] = b[len_i];
     }
 }
 
@@ -429,7 +444,7 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
         int x_len,
         int b_len) {
     int len = x_len + b_len;
-    int block_count = (count * len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK;
+    int block_count = std::min((count * len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK, 56);
     NumberPointerArray xs_arr = ToNumberPointerArray(xs);
     KernelCopyForUniNodeForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>((const dtype**)xs_arr.value,
             (const dtype*)b, xs_dest,
@@ -479,26 +494,31 @@ void Verify(dtype *host, dtype *device, int len) {
 }
 
 cudaError_t MemoryPool::Malloc(void **p, int size) {
-    bool found = false;
-    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
-        if (size == it->size) {
-            busy_blocks_.push_back(*it);
-            *p = it->p;
-            free_blocks_.erase(it);
-            found = true;
-            break;
-        }
-    }
+    CallCnmem(cnmemMalloc(p, size, NULL));
+    return cudaSuccess;
 
-    cudaError_t status = cudaSuccess;
-    if (!found) {
-        status = cudaMalloc(p, size);
-        assert(status == cudaSuccess);
-        MemoryBlock block(*p, size);
-        busy_blocks_.push_back(block);
-    }
+    //return cudaMalloc(p, size);
 
-    return status;
+//    bool found = false;
+//    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
+//        if (size == it->size) {
+//            busy_blocks_.push_back(*it);
+//            *p = it->p;
+//            free_blocks_.erase(it);
+//            found = true;
+//            break;
+//        }
+//    }
+//
+//    cudaError_t status = cudaSuccess;
+//    if (!found) {
+//        status = cudaMalloc(p, size);
+//        assert(status == cudaSuccess);
+//        MemoryBlock block(*p, size);
+//        busy_blocks_.push_back(block);
+//    }
+//
+//    return status;
 }
 
 void MemoryPool::FreePool() {
@@ -514,9 +534,54 @@ void MemoryPool::FreePool() {
     }
 }
 
+cudaError_t MemoryPool::Free(void *p) {
+    CallCnmem(cnmemFree(p, NULL));
+
+//    return cudaFree(p);
+
+//    for (auto it = busy_blocks_.begin(); it != busy_blocks_.end(); ++it) {
+//        if (p == it->p) {
+//            free_blocks_.push_back(*it);
+//            busy_blocks_.erase(it);
+//            break;
+//        }
+//    }
+
+    return cudaSuccess;
+}
+
 void Profiler::EndCudaEvent() {
     cudaDeviceSynchronize();
     EndEvent();
+}
+
+__global__ void KernelLtyForUniBackward(const dtype **ly, const dtype *ty,
+        const dtype *y,
+        dtype *lty,
+        int count,
+        int dim) {
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    int step = blockDim.x * gridDim.x;
+    int len = count * dim;
+    for (int i = index; i < len; i += step) {
+        int count_i = i % count;
+        int dim_i = i / count;
+        dtype tyi = ty[i];
+        lty[i] = ly[count_i][dim_i] * (1 - tyi * tyi);
+    }
+}
+
+void LtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
+        const dtype *y,
+        dtype *lty,
+        int count,
+        int dim) {
+    int block_count = std::min(BLOCK_COUNT,
+            (count * dim + THREAD_COUNT_PER_BLOCK - 1) /
+            THREAD_COUNT_PER_BLOCK);
+    NumberPointerArray ly_arr = ToNumberPointerArray(ly);
+    KernelLtyForUniBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(ly_arr,
+            ty, y, lty, count, dim);
 }
 
 }

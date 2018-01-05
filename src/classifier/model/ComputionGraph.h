@@ -17,7 +17,7 @@ public:
 
     Graph *_graph;
     ModelParams *_modelParams;
-    const static int max_sentence_length = 1024;
+    const static int max_sentence_length = 100;
 
     GraphBuilder() = default;
     GraphBuilder(const GraphBuilder&) = default;

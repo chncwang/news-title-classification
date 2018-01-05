@@ -454,18 +454,18 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
             b_len);
 }
 
-void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col, int count, bool useb) {
+void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
+        int count, bool useb, bool should_x_transpose) {
     cublasHandle_t &handle = GetCublasHandle();
     float alpha = 1;
     float beta = useb? 1 : 0;
+    cublasOperation_t op = should_x_transpose ? CUBLAS_OP_T : CUBLAS_OP_N;
 #if USE_FLOAT
-    CallCublas(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, count, row, col, &alpha, x, count, W, col, &beta,
-            y,
-            count));
+    CallCublas(cublasSgemm(handle, CUBLAS_OP_N, op, count, row, col,
+                &alpha, x, count, W, col, &beta, y, count));
 #else
-    CallCublas(cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, count, row, col, &alpha, x, count, W, col, &beta,
-            y,
-            count));
+    CallCublas(cublasDgemm(handle, CUBLAS_OP_N, op, count, row, col,
+                &alpha, x, count, W, col, &beta, y, count));
 #endif
 }
 
@@ -555,7 +555,7 @@ void Profiler::EndCudaEvent() {
     EndEvent();
 }
 
-__global__ void KernelLtyForUniBackward(const dtype **ly, const dtype *ty,
+__global__ void KernelLtyForUniBackward(dtype **ly, const dtype *ty,
         const dtype *y,
         dtype *lty,
         int count,
@@ -580,8 +580,8 @@ void LtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
             (count * dim + THREAD_COUNT_PER_BLOCK - 1) /
             THREAD_COUNT_PER_BLOCK);
     NumberPointerArray ly_arr = ToNumberPointerArray(ly);
-    KernelLtyForUniBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(ly_arr,
-            ty, y, lty, count, dim);
+    KernelLtyForUniBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+            ly_arr.value, ty, y, lty, count, dim);
 }
 
 }

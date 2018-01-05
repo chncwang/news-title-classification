@@ -315,14 +315,15 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
         int b_len);
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
         int count,
-        bool useb);
+        bool useb,
+        bool should_x_transpose = false);
 
 
-}
 void LtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
         const dtype *y,
         dtype *lty,
         int count,
         int dim);
+}
 
 #endif

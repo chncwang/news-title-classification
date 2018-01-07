@@ -316,14 +316,18 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
         int count,
         bool useb,
-        bool should_x_transpose = false);
+        bool should_x_transpose = false,
+        bool should_W_transpose = false);
 
 
-void LtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
+void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
         const dtype *y,
         dtype *lty,
         int count,
         int dim);
+void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
+        const dtype *lx, dtype *b, std::vector<dtype*> &losses, int count,
+        int out_dim, int in_dim);
 }
 
 #endif

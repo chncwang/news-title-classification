@@ -187,142 +187,6 @@ void Tensor2D::copyFromDeviceToHost() {
     CallCuda(cudaMemcpy(v, value, size * sizeof(dtype), cudaMemcpyDeviceToHost));
 }
 
-__global__ void KernelUpdateAdam(dtype *val,  dtype *grad,
-        dtype *aux_mean, dtype *aux_square, int row, int col, int iter, dtype belta1,
-        dtype belta2, dtype alpha, dtype reg, dtype eps) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    int len = row * col;
-    if (index >= len) {
-        return;
-    }
-    if (col > 1 && row > 1) {
-        grad[index] = grad[index] + reg * val[index];
-    }
-    __syncthreads();
-
-    aux_mean[index] = belta1 * aux_mean[index] + (1-belta1) * grad[index];
-    aux_square[index] = belta2 * aux_square[index] + (1 - belta2) *
-        grad[index] * grad[index];
-
-    dtype lr_t = alpha * cuda_sqrt(1 - cuda_pow(belta2, iter + 1)) /
-        (1 - cuda_pow(belta1, iter + 1));
-    val[index] = val[index] - aux_mean[index] * lr_t /
-        cuda_sqrt(aux_square[index] + eps);
-}
-
-void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
-        Tensor2D &aux_square, int &iter, dtype belta1, dtype belta2,
-        dtype alpha, dtype reg, dtype eps) {
-    int block_count = (val.row * val.col - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
-    KernelUpdateAdam<<<block_count, THREAD_COUNT_PER_BLOCK>>>(val.value,
-            grad.value, aux_mean.value, aux_square.value, val.row, val.col,
-            iter, belta1, belta2, alpha, reg, eps);
-    ++iter;
-}
-
-__device__ volatile dtype global_sum_temp[100][THREAD_COUNT_PER_BLOCK];
-__device__ int block_nums_in_x[100];
-__device__ int block_num_in_y;
-__device__ volatile dtype global_sum;
-
-__global__ void KernelRescaleGrads(dtype **grads, int *lens,
-        dtype max_scale) {
-    __shared__ volatile dtype sum_temp[THREAD_COUNT_PER_BLOCK];
-    __shared__ volatile bool is_last_block_in_x;
-
-    if (threadIdx.x == 0) {
-        is_last_block_in_x = false;
-    }
-
-    dtype *grad = grads[blockIdx.y];
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
-    if (index == 0) {
-        block_nums_in_x[blockIdx.y] = 0;
-        if (blockIdx.y == 0) {
-            block_num_in_y = 0;
-        }
-    }
-    int len = lens[blockIdx.y];
-    if (index < len) {
-        dtype grad_val = grad[index];
-        sum_temp[threadIdx.x] = grad_val * grad_val;
-    } else {
-        sum_temp[threadIdx.x] = 0;
-    }
-    __syncthreads();
-
-    for (int i = (THREAD_COUNT_PER_BLOCK >> 1); i > 0; i >>=1) {
-        if (threadIdx.x < i) {
-            sum_temp[threadIdx.x] += sum_temp[threadIdx.x + i];
-        }
-        __syncthreads();
-    }
-
-    if (threadIdx.x == 0) {
-        global_sum_temp[blockIdx.y][blockIdx.x] = sum_temp[0];
-        if (atomicAdd(block_nums_in_x + blockIdx.y, 1) == gridDim.x - 1) {
-            is_last_block_in_x = true;
-        }
-    }
-    __syncthreads();
-
-    if (is_last_block_in_x) {
-        if (threadIdx.x < gridDim.x) {
-            sum_temp[threadIdx.x] = global_sum_temp[blockIdx.y][threadIdx.x];
-        } else {
-            sum_temp[threadIdx.x] = 0;
-        }
-        __syncthreads();
-
-        for (int i = (THREAD_COUNT_PER_BLOCK >> 1); i > 0; i >>=1) {
-            if (threadIdx.x < i) {
-                sum_temp[threadIdx.x] += sum_temp[threadIdx.x + i];
-            }
-            __syncthreads();
-        }
-
-        if (threadIdx.x == 0) {
-            global_sum_temp[0][blockIdx.y] = sum_temp[0];
-            if (atomicAdd(&block_num_in_y, 1) == gridDim.y - 1) {
-                dtype sum = 0;
-                for (int i = 0; i<gridDim.y; ++i) {
-                    sum += global_sum_temp[0][i];
-                }
-                global_sum = sum;
-            }
-        }
-    }
-    __syncthreads();
-    int local_global_sum = global_sum;
-
-    assert(local_global_sum < 1e20);
-    dtype norm = cuda_sqrt(local_global_sum);
-    if (max_scale > 0 && norm > max_scale) {
-        dtype scale = max_scale / norm;
-        grad[index] *= scale;
-    }
-}
-
-void RescaleGrads(std::vector<dtype *> &grads, const std::vector<int> &lens,
-        dtype max_scale) {
-    assert(grads.size() == lens.size());
-    assert(grads.size() <= 100);
-    int max_len = *std::max_element(lens.begin(), lens.end());
-    std::cout << "max_len:" << max_len << std::endl;
-    assert(max_len < THREAD_COUNT_PER_BLOCK * THREAD_COUNT_PER_BLOCK);
-
-    int block_count = (max_len - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
-    dim3 block_dim(block_count, grads.size(), 1);
-
-    NumberPointerArray grads_arr = ToNumberPointerArray(grads);
-    IntArray len_arr = ToIntArray(lens);
-
-    KernelRescaleGrads<<<block_dim, THREAD_COUNT_PER_BLOCK>>>(grads_arr.value,
-            len_arr.value, max_scale);
-}
-
 void Random(dtype *v, int len, dtype bound) {
     dtype *mem = (dtype*)malloc(len * sizeof(dtype));
     assert(mem != NULL);
@@ -425,15 +289,17 @@ __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int step = gridDim.x * blockDim.x;
     int x_total_len = count * x_len;
-    for (int i = index; i < x_total_len; i += step) {
-        int len_i = i / count;
-        int count_i = i % count;
-        xs_dest[i] = xs[count_i][len_i];
-    }
-    for (int i = index; i < x_total_len + count * b_len; i += step) {
-        int b_i = i - x_total_len;
-        int len_i = b_i / count;
-        b_dest[b_i] = b[len_i];
+    int b_total_len = count * b_len;
+    for (int i = index; i < x_total_len + b_total_len; i += step) {
+        if (i < x_total_len) {
+            int len_i = i / count;
+            int count_i = i % count;
+            xs_dest[i] = xs[count_i][len_i];
+        } else {
+            int b_i = i - x_total_len;
+            int len_i = b_i / count;
+            b_dest[b_i] = b[len_i];
+        }
     }
 }
 
@@ -455,17 +321,21 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
 }
 
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
-        int count, bool useb, bool should_x_transpose) {
+        int count, bool useb, bool should_x_transpose,
+        bool should_W_transpose) {
     cublasHandle_t &handle = GetCublasHandle();
     float alpha = 1;
     float beta = useb? 1 : 0;
-    cublasOperation_t op = should_x_transpose ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t x_op = should_x_transpose ? CUBLAS_OP_T : CUBLAS_OP_N;
+    int ldx = should_x_transpose ? col : count;
+    cublasOperation_t W_op = should_W_transpose ? CUBLAS_OP_T : CUBLAS_OP_N;
+    int ldw = should_W_transpose ? row : col;
 #if USE_FLOAT
-    CallCublas(cublasSgemm(handle, CUBLAS_OP_N, op, count, row, col,
-                &alpha, x, count, W, col, &beta, y, count));
+    CallCublas(cublasSgemm(handle, x_op, W_op, count, row, col,
+                &alpha, x, ldx, W, ldw, &beta, y, count));
 #else
-    CallCublas(cublasDgemm(handle, CUBLAS_OP_N, op, count, row, col,
-                &alpha, x, count, W, col, &beta, y, count));
+    CallCublas(cublasDgemm(handle, x_op, W_op, count, row, col,
+                &alpha, x, ldx, W, ldw, &beta, y, count));
 #endif
 }
 
@@ -555,7 +425,7 @@ void Profiler::EndCudaEvent() {
     EndEvent();
 }
 
-__global__ void KernelLtyForUniBackward(dtype **ly, const dtype *ty,
+__global__ void KernelCalculateLtyForUniBackward(dtype **ly, const dtype *ty,
         const dtype *y,
         dtype *lty,
         int count,
@@ -571,17 +441,77 @@ __global__ void KernelLtyForUniBackward(dtype **ly, const dtype *ty,
     }
 }
 
-void LtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
+void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
         const dtype *y,
         dtype *lty,
         int count,
         int dim) {
-    int block_count = std::min(BLOCK_COUNT,
-            (count * dim + THREAD_COUNT_PER_BLOCK - 1) /
-            THREAD_COUNT_PER_BLOCK);
     NumberPointerArray ly_arr = ToNumberPointerArray(ly);
-    KernelLtyForUniBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
-            ly_arr.value, ty, y, lty, count, dim);
+    int block_count = std::min(BLOCK_COUNT, (count * dim +
+                THREAD_COUNT_PER_BLOCK - 1) / THREAD_COUNT_PER_BLOCK);
+    KernelCalculateLtyForUniBackward<<<block_count,
+        THREAD_COUNT_PER_BLOCK>>>(ly_arr.value, ty, y, lty, count, dim);
+}
+
+__device__ int global_block_count[1000000];
+__global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
+        const dtype *lty,
+        const dtype *lx,
+        dtype *b,
+        dtype **losses,
+        int count,
+        int out_dim,
+        int in_dim,
+        dtype *block_sums) {
+    __shared__ volatile dtype shared_arr[THREAD_COUNT_PER_BLOCK];
+
+    int count_i = blockIdx.y * blockDim.x + threadIdx.x;
+    int dim_i = blockIdx.x;
+    if (dim_i < out_dim) {
+        global_block_count[dim_i] = 0;
+        int lty_index = dim_i * count + count_i;
+        shared_arr[threadIdx.x] = count_i < count ? lty[lty_index] : 0.0f;
+        __syncthreads();
+
+        for (int i = (THREAD_COUNT_PER_BLOCK >> 1); i > 0; i>>=1) {
+            if (threadIdx.x < i) {
+                shared_arr[threadIdx.x] += shared_arr[threadIdx.x + i];
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0) {
+            block_sums[gridDim.y * blockIdx.x + blockIdx.y] = shared_arr[0];
+            if (atomicAdd(global_block_count + dim_i, 1) == gridDim.y - 1) {
+                dtype sum = 0.0;
+                for (int i = 0; i < gridDim.y; ++i) {
+                    sum += block_sums[gridDim.y * blockIdx.x + i];
+                }
+                b[dim_i] += sum;
+            }
+        }
+    } else {
+        if (count_i < count) {
+            dim_i -= out_dim;
+            int lx_index = dim_i * count + count_i;
+            losses[count_i][dim_i] += lx[lx_index];
+        }
+    }
+}
+
+void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
+        const dtype *lx, dtype *b, std::vector<dtype*> &losses, int count,
+        int out_dim, int in_dim) {
+    int block_y = (count - 1 + THREAD_COUNT_PER_BLOCK) /
+        THREAD_COUNT_PER_BLOCK;
+    dim3 block_dim(out_dim + in_dim, block_y, 1);
+    NumberPointerArray loss_arr;
+    loss_arr.init(losses.data(), count);
+    Tensor1D block_sums;
+    block_sums.init(block_y * out_dim);
+    KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward<<<block_dim,
+        THREAD_COUNT_PER_BLOCK>>>(lty, lx, b, loss_arr.value, count, out_dim,
+                in_dim, block_sums.value);
 }
 
 }

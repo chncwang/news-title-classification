@@ -1,11 +1,11 @@
 dropProb = -1
-batchSize = 100
+batchSize = 4
 #wordCutOff = 4
 wordEmbFineTune = true
 maxIter = 1000
 maxInstance = -1
 outBest = .debug
-hiddenSize = 200
+hiddenSize = 100
 wordEmbSize = 50
 adaAlpha = 0.001
 wordcontext = 2

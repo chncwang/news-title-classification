@@ -229,12 +229,12 @@ __global__ void PrintNums(dtype* p, int len) {
 
 
 void InitCuda() {
-    //cudaSetDevice(1);
+    cudaSetDevice(1);
 
     cnmemDevice_t device;
     device.size = 10000000000;
     device.device = 1;
-    cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
+    //cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
 
     CallCuda(cudaPrintfInit());
 }
@@ -364,31 +364,31 @@ void Verify(dtype *host, dtype *device, int len) {
 }
 
 cudaError_t MemoryPool::Malloc(void **p, int size) {
-    CallCnmem(cnmemMalloc(p, size, NULL));
-    return cudaSuccess;
+    //CallCnmem(cnmemMalloc(p, size, NULL));
+    //return cudaSuccess;
 
-    //return cudaMalloc(p, size);
+//    return cudaMalloc(p, size);
 
-//    bool found = false;
-//    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
-//        if (size == it->size) {
-//            busy_blocks_.push_back(*it);
-//            *p = it->p;
-//            free_blocks_.erase(it);
-//            found = true;
-//            break;
-//        }
-//    }
-//
-//    cudaError_t status = cudaSuccess;
-//    if (!found) {
-//        status = cudaMalloc(p, size);
-//        assert(status == cudaSuccess);
-//        MemoryBlock block(*p, size);
-//        busy_blocks_.push_back(block);
-//    }
-//
-//    return status;
+    bool found = false;
+    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
+        if (size <= it->size) {
+            busy_blocks_.push_back(*it);
+            *p = it->p;
+            free_blocks_.erase(it);
+            found = true;
+            break;
+        }
+    }
+
+    cudaError_t status = cudaSuccess;
+    if (!found) {
+        status = cudaMalloc(p, size);
+        assert(status == cudaSuccess);
+        MemoryBlock block(*p, size);
+        busy_blocks_.push_back(block);
+    }
+
+    return status;
 }
 
 void MemoryPool::FreePool() {
@@ -405,17 +405,17 @@ void MemoryPool::FreePool() {
 }
 
 cudaError_t MemoryPool::Free(void *p) {
-    CallCnmem(cnmemFree(p, NULL));
+//    CallCnmem(cnmemFree(p, NULL));
 
 //    return cudaFree(p);
 
-//    for (auto it = busy_blocks_.begin(); it != busy_blocks_.end(); ++it) {
-//        if (p == it->p) {
-//            free_blocks_.push_back(*it);
-//            busy_blocks_.erase(it);
-//            break;
-//        }
-//    }
+    for (auto it = busy_blocks_.begin(); it != busy_blocks_.end(); ++it) {
+        if (p == it->p) {
+            free_blocks_.push_back(*it);
+            busy_blocks_.erase(it);
+            break;
+        }
+    }
 
     return cudaSuccess;
 }
@@ -425,7 +425,8 @@ void Profiler::EndCudaEvent() {
     EndEvent();
 }
 
-__global__ void KernelCalculateLtyForUniBackward(dtype **ly, const dtype *ty,
+__global__ void KernelCalculateLtyForUniBackward(const dtype *const*ly,
+        const dtype *ty,
         const dtype *y,
         dtype *lty,
         int count,

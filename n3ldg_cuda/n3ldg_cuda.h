@@ -328,6 +328,8 @@ void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
 void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
         const dtype *lx, dtype *b, std::vector<dtype*> &losses, int count,
         int out_dim, int in_dim);
+void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
+        dtype *mask);
 }
 
 #endif

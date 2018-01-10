@@ -8,6 +8,8 @@
 #include "cuPrintf.cuh"
 #include "cuPrintf.cu"
 #include "memory_pool.h"
+#include <curand.h>
+#include <curand_kernel.h>
 #include "profiler.h"
 #include "cnmem.h"
 
@@ -200,6 +202,14 @@ void Random(dtype *v, int len, dtype bound) {
     free(mem);
 }
 
+__device__ int DeviceDefaultIndex() {
+    return blockIdx.x * blockDim.x + threadIdx.x;
+}
+
+__device__ int DeviceDefaultStep() {
+    return gridDim.x * blockDim.x;
+}
+
 __global__ void KernelZero(dtype *v, int len) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= len) {
@@ -229,7 +239,7 @@ __global__ void PrintNums(dtype* p, int len) {
 
 
 void InitCuda() {
-    cudaSetDevice(1);
+    cudaSetDevice(0);
 
     cnmemDevice_t device;
     device.size = 10000000000;
@@ -513,6 +523,71 @@ void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
     KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward<<<block_dim,
         THREAD_COUNT_PER_BLOCK>>>(lty, lx, b, loss_arr.value, count, out_dim,
                 in_dim, block_sums.value);
+}
+
+constexpr int MAX_BATCH_COUNT = 1000000;
+
+__global__ void KernelInitCurandStates(curandState_t *states) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int step = gridDim.x * blockDim.x;
+    for (int i = index; i < MAX_BATCH_COUNT; i += step) {
+        curand_init(0, i, 0, &states[i]);
+    }
+}
+
+curandState_t *GetCurandStates() {
+    static curandState_t *states;
+    if (states == NULL) {
+        MemoryPool &pool = MemoryPool::Ins();
+        CallCuda(pool.Malloc((void**)&states, sizeof(curandState_t) *
+                    MAX_BATCH_COUNT));
+        KernelInitCurandStates<<<BLOCK_COUNT, THREAD_COUNT_PER_BLOCK>>>(
+                states);
+    }
+    return states;
+}
+
+__global__ void KernelInitMask(int dropout_ratio, int count, int dim,
+        dtype *mask) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int step = blockDim.x * gridDim.x;
+    for (int i = index; i < count * dim; i += step) {
+        int dim_i = i / count;
+        mask[i] = dim_i < dropout_ratio ? 0.0f : 1.0f;
+    }
+}
+
+__global__ void KernelCalculateDropoutMask(curandState_t *states,
+        int count, int dim, dtype *mask) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int step = blockDim.x * gridDim.x;
+    for (int i = index; i < count; i += step) {
+        for (int j = 0; j < dim - 1; ++j) {
+            dtype t = mask[j * count + i];
+            int r = curand(states + i) % (dim - 1 - j);
+            int other_j = j + 1 + r;
+            mask[j * count + i] = mask[other_j * count + i];
+            mask[other_j * count + i] = t;
+        }
+    }
+}
+
+void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
+        dtype *mask) {
+    Profiler &profiler = Profiler::Ins();
+    int block_count = std::min(BLOCK_COUNT, (count * dim - 1 +
+                THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    profiler.BeginEvent("mask init");
+    KernelInitMask<<<block_count, THREAD_COUNT_PER_BLOCK>>>(dropout_ratio,
+            count, dim, mask);
+    profiler.EndCudaEvent();
+    curandState_t *states = GetCurandStates();
+    block_count = std::min(BLOCK_COUNT, (count - 1 +
+                THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    profiler.BeginEvent("mask shuffle");
+    KernelCalculateDropoutMask<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+            states, count, dim, mask);
+    profiler.EndCudaEvent();
 }
 
 }

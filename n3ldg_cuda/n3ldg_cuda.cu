@@ -52,6 +52,10 @@ void CallCublas(cublasStatus_t status) {
     assert(status == CUBLAS_STATUS_SUCCESS);
 }
 
+void CallCurand(curandStatus status) {
+    assert(status == CURAND_STATUS_SUCCESS);
+}
+
 cublasHandle_t& GetCublasHandle() {
     static cublasHandle_t handle;
     static bool init;
@@ -264,30 +268,60 @@ __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
     }
 }
 
-void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count, int len) {
+void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
+        int len) {
     KernelCopyFromOneVectorToMultiVectors<<<
-        (len * count - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK, THREAD_COUNT_PER_BLOCK>>>(
-                src, dest, count, len);
+        (len * count - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK,
+    THREAD_COUNT_PER_BLOCK>>>(src, dest, count, len);
 }
 
-__global__ void Tanh(const dtype *src, dtype**dest, dtype* dest2, int count, int len) {
+__global__ void KernelTanh(const dtype *src, dtype**dest, dtype* dest2,
+        int count, int len, bool is_being_trained, dtype drop_factor,
+        const dtype *drop_mask) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int step = blockDim.x * gridDim.x;
+
+    __syncthreads();
+
     for (int i = index; i < len * count; i += step) {
         int count_i = i % count;
         int len_i = i / count;
-        dtype result = cuda_tanh(src[i]);
-        dest[count_i][len_i] = result;
-        dest2[i] = result;
+        if (is_being_trained) {
+            if (drop_mask[i] <= drop_factor) {
+                dest[count_i][len_i] = 0.0f;
+                dest2[i] = 0.0f;
+            } else {
+                dtype result = cuda_tanh(src[i]);
+                dest[count_i][len_i] = result;
+                dest2[i] = result;
+            }
+        } else {
+            dtype result = cuda_tanh(src[i]);
+            dest[count_i][len_i] = result * (1 - drop_factor);
+            dest2[i] = result * (1 - drop_factor);
+        }
     }
 }
 
-void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2, int len) {
+__global__ void KernelCountDrop(dtype *y, int dim) {
+    int count = 0;
+    for (int i = 0; i < dim; ++i) {
+        if (y[i] > -0.0001 && y[i] < 0.0001) {
+            ++count;
+        }
+    }
+    KernelPrintLine("drop count:%d", count);
+}
+
+void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
+        int len, bool is_being_trained, dtype drop_factor,
+        const dtype *drop_mask) {
     int count = dest.size();
     NumberPointerArray dest_arr = ToNumberPointerArray(dest);
     int block_count = std::min((len * count - 1 + THREAD_COUNT_PER_BLOCK) /
         THREAD_COUNT_PER_BLOCK, BLOCK_COUNT);
-    Tanh<<<block_count, THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, dest2, count, len);
+    KernelTanh<<<block_count, THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value,
+            dest2, count, len, is_being_trained, drop_factor, drop_mask);
 }
 
 __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
@@ -547,47 +581,20 @@ curandState_t *GetCurandStates() {
     return states;
 }
 
-__global__ void KernelInitMask(int dropout_ratio, int count, int dim,
-        dtype *mask) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    int step = blockDim.x * gridDim.x;
-    for (int i = index; i < count * dim; i += step) {
-        int dim_i = i / count;
-        mask[i] = dim_i < dropout_ratio ? 0.0f : 1.0f;
+curandGenerator_t &GetGenerator() {
+    static curandGenerator_t gen;
+    static bool init;
+    if (!init) {
+        CallCurand(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
+        CallCurand(curandSetPseudoRandomGeneratorSeed(gen, 0));
+        init = true;
     }
+    return gen;
 }
 
-__global__ void KernelCalculateDropoutMask(curandState_t *states,
-        int count, int dim, dtype *mask) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    int step = blockDim.x * gridDim.x;
-    for (int i = index; i < count; i += step) {
-        for (int j = 0; j < dim - 1; ++j) {
-            dtype t = mask[j * count + i];
-            int r = curand(states + i) % (dim - 1 - j);
-            int other_j = j + 1 + r;
-            mask[j * count + i] = mask[other_j * count + i];
-            mask[other_j * count + i] = t;
-        }
-    }
-}
-
-void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
-        dtype *mask) {
-    Profiler &profiler = Profiler::Ins();
-    int block_count = std::min(BLOCK_COUNT, (count * dim - 1 +
-                THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
-    profiler.BeginEvent("mask init");
-    KernelInitMask<<<block_count, THREAD_COUNT_PER_BLOCK>>>(dropout_ratio,
-            count, dim, mask);
-    profiler.EndCudaEvent();
-    curandState_t *states = GetCurandStates();
-    block_count = std::min(BLOCK_COUNT, (count - 1 +
-                THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
-    profiler.BeginEvent("mask shuffle");
-    KernelCalculateDropoutMask<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
-            states, count, dim, mask);
-    profiler.EndCudaEvent();
+void CalculateDropoutMask(dtype drop_factor, int count, int dim, dtype* mask) {
+    curandGenerator_t &gen = GetGenerator();
+    CallCurand(curandGenerateUniform(gen, mask, count * dim));
 }
 
 }

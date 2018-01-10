@@ -305,7 +305,9 @@ void InitCuda();
 void EndCuda();
 void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
         int len);
-void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2, int len);
+void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2,
+        int len, bool is_being_trained, dtype drop_factor,
+        const dtype *drop_mask);
 NumberPointerArray ToNumberPointerArray(const std::vector<dtype*> &vec);
 void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
         dtype* xs_dest,

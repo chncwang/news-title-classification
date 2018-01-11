@@ -58,6 +58,10 @@ else()
 endif()
 add_definitions( -DUSE_FLOAT )
 
+IF(TEST_CUDA)
+    ADD_DEFINITIONS(-DTEST_CUDA)
+ENDIF()
+
 IF(USE_CUDA)
     ADD_DEFINITIONS(-DUSE_GPU)
     INCLUDE_DIRECTORIES(/usr/local/cuda/samples/common/inc)

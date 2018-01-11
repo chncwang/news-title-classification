@@ -286,19 +286,18 @@ __global__ void KernelTanh(const dtype *src, dtype**dest, dtype* dest2,
     for (int i = index; i < len * count; i += step) {
         int count_i = i % count;
         int len_i = i / count;
+        dtype result = cuda_tanh(src[i]);
         if (is_being_trained) {
             if (drop_mask[i] <= drop_factor) {
                 dest[count_i][len_i] = 0.0f;
-                dest2[i] = 0.0f;
+                dest2[i] = result;
             } else {
-                dtype result = cuda_tanh(src[i]);
                 dest[count_i][len_i] = result;
                 dest2[i] = result;
             }
         } else {
-            dtype result = cuda_tanh(src[i]);
             dest[count_i][len_i] = result * (1 - drop_factor);
-            dest2[i] = result * (1 - drop_factor);
+            dest2[i] = result;
         }
     }
 }

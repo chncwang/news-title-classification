@@ -205,7 +205,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
             std::cout << "train set is good enough, stop" << std::endl;
             exit(0);
         }
-        continue;
+//        continue;
 
         float dev_acc = 0.0;
         Metric dev_metric;

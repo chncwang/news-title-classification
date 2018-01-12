@@ -524,11 +524,11 @@ __global__ void KernelCalculateLtyForUniBackward(const dtype *const*ly,
     for (int i = index; i < len; i += step) {
         int count_i = i % count;
         int dim_i = i / count;
-        dtype tyi = ty[i];
+        dtype yi = y[i];
         if (drop_mask[i] <= drop_factor) {
             lty[i] = 0.0f;
         } else {
-            lty[i] = ly[count_i][dim_i] * (1 - tyi * tyi);
+            lty[i] = ly[count_i][dim_i] * (1 - yi * yi);
         }
     }
 }
@@ -564,9 +564,14 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
     __shared__ volatile dtype shared_arr[THREAD_COUNT_PER_BLOCK];
 
     int count_i = blockIdx.y * blockDim.x + threadIdx.x;
+    //if (count >= THREAD_COUNT_PER_BLOCK) {
+    //    KernelPrintLine("count_i:%d", count_i);
+    //}
     int dim_i = blockIdx.x;
     if (dim_i < out_dim) {
-        global_block_count[dim_i] = 0;
+        if (threadIdx.x == 0 && blockIdx.y == 0) {
+            global_block_count[dim_i] = 0;
+        }
         int lty_index = dim_i * count + count_i;
         shared_arr[threadIdx.x] = count_i < count ? lty[lty_index] : 0.0f;
         __syncthreads();
@@ -610,6 +615,7 @@ void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
     KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward<<<block_dim,
         THREAD_COUNT_PER_BLOCK>>>(lty, lx, b, loss_arr.value, count, out_dim,
                 in_dim, block_sums.value);
+    //cudaPrintfDisplay(stdout, true);
 }
 
 constexpr int MAX_BATCH_COUNT = 1000000;

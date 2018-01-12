@@ -56,10 +56,11 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
 else()
     SET( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -fPIC -funroll-loops -w -std=c++11 -Ofast -march=native" )
 endif()
-add_definitions( -DUSE_FLOAT )
 
+ADD_DEFINITIONS( -DUSE_FLOAT )
 IF(TEST_CUDA)
     ADD_DEFINITIONS(-DTEST_CUDA)
+ELSE()
 ENDIF()
 
 IF(USE_CUDA)

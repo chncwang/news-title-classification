@@ -57,7 +57,7 @@ struct IntArray {
     ~IntArray();
 };
 
-void Verify(dtype *host, dtype* device, int len);
+bool Verify(dtype *host, dtype* device, int len, const char* message);
 
 struct Tensor1D {
     dtype *value = NULL;
@@ -144,8 +144,8 @@ struct Tensor1D {
         }
     }
 
-    void verify() {
-        Verify(v, value, dim);
+    bool verify(const char *message) {
+        return Verify(v, value, dim, message);
     }
 
     void copyFromHostToDevice();
@@ -282,8 +282,8 @@ struct Tensor2D {
         }
     }
 
-    void verify() {
-        Verify(v, value, size);
+    bool verify(const char* message) {
+        return Verify(v, value, size, message);
     }
 
     void copyFromHostToDevice();
@@ -324,6 +324,8 @@ void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
 
 void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
         const dtype *y,
+        const dtype *drop_mask,
+        dtype drop_factor,
         dtype *lty,
         int count,
         int dim);

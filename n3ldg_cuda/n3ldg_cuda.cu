@@ -12,15 +12,22 @@
 #include <curand_kernel.h>
 #include "profiler.h"
 #include "cnmem.h"
+#include <string>
 
 namespace n3ldg_cuda {
 
 using std::cout;
 using std::endl;
 
+#if USE_FLOAT
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
 #define cuda_tanh(x) tanhf(x)
+#else
+#define cuda_sqrt(x) sqrt(x)
+#define cuda_pow(x, y) pow(x, y)
+#define cuda_tanh(x) tanh(x)
+#endif
 
 #define KERNEL_LOG
 
@@ -214,6 +221,10 @@ __device__ int DeviceDefaultStep() {
     return gridDim.x * blockDim.x;
 }
 
+__device__ dtype DeviceAbs(dtype d) {
+    return d > 0 ? d : -d;
+}
+
 __global__ void KernelZero(dtype *v, int len) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= len) {
@@ -236,9 +247,8 @@ __global__ void PrintPointers(void **p, int len) {
 
 __global__ void PrintNums(dtype* p, int len) {
     for (int i = 0; i < len; ++i) {
-        printf("%f,", p[i]);
+        printf("%f\n", p[i]);
     }
-    printf("\n");
 }
 
 
@@ -315,6 +325,9 @@ __global__ void KernelCountDrop(dtype *y, int dim) {
 void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
         int len, bool is_being_trained, dtype drop_factor,
         const dtype *drop_mask) {
+    if (drop_factor < 0) {
+        drop_factor = 0;
+    }
     int count = dest.size();
     NumberPointerArray dest_arr = ToNumberPointerArray(dest);
     int block_count = std::min((len * count - 1 + THREAD_COUNT_PER_BLOCK) /
@@ -382,11 +395,18 @@ void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
 #endif
 }
 
-__global__ void KernelVerify(dtype *host, dtype *device, int len) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void KernelVerify(dtype *host, dtype *device, int len,
+        const char *message, bool *success) {
+    int index = DeviceDefaultIndex();
     if (index < len) {
         dtype loss = host[index] - device[index];
-        if (loss > 0.01 || loss < -0.01) {
+        if (DeviceAbs(loss) > 0.01) {
+            *success = false;
+            printf("KernelVerify %s: host:%f device:%f loss:%f\n",
+                    message,
+                    host[index],
+                    device[index],
+                    loss);
             KernelPrintLine("KernelVerify: host:%f device:%f loss:%f",
                     host[index],
                     device[index],
@@ -395,15 +415,37 @@ __global__ void KernelVerify(dtype *host, dtype *device, int len) {
     }
 }
 
-void Verify(dtype *host, dtype *device, int len) {
+bool Verify(dtype *host, dtype *device, int len, const char* message) {
     NumberArray arr;
     arr.init(host, len);
     int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
         THREAD_COUNT_PER_BLOCK;
+    char *m;
+    CallCuda(MemoryPool::Ins().Malloc((void**)&m,
+                (strlen(message) + 1) * sizeof(char)));
+    CallCuda(cudaMemcpy(m, message,
+                (strlen(message) + 1) * sizeof(char), cudaMemcpyHostToDevice));
+    bool success = true;
+    bool *dev_success;
+    CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, sizeof(bool)));
+    CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
+                cudaMemcpyHostToDevice));
     KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
-            len);
+            len, m, dev_success);
+    CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
+                cudaMemcpyDeviceToHost));
+//    if (!success) {
+//        printf("host:\n");
+//        PrintNums<<<1, 1>>>(arr.value, len);
+//        cudaDeviceSynchronize();
+//        printf("device:\n");
+//        PrintNums<<<1, 1>>>(device, len);
+//        cudaDeviceSynchronize();
+//    }
+    MemoryPool::Ins().Free(m);
     cudaDeviceSynchronize();
     cudaPrintfDisplay(stdout, true);
+    return success;
 }
 
 cudaError_t MemoryPool::Malloc(void **p, int size) {
@@ -471,30 +513,42 @@ void Profiler::EndCudaEvent() {
 __global__ void KernelCalculateLtyForUniBackward(const dtype *const*ly,
         const dtype *ty,
         const dtype *y,
+        const dtype *drop_mask,
+        dtype drop_factor,
         dtype *lty,
         int count,
         int dim) {
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
-    int step = blockDim.x * gridDim.x;
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
     int len = count * dim;
     for (int i = index; i < len; i += step) {
         int count_i = i % count;
         int dim_i = i / count;
         dtype tyi = ty[i];
-        lty[i] = ly[count_i][dim_i] * (1 - tyi * tyi);
+        if (drop_mask[i] <= drop_factor) {
+            lty[i] = 0.0f;
+        } else {
+            lty[i] = ly[count_i][dim_i] * (1 - tyi * tyi);
+        }
     }
 }
 
 void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
         const dtype *y,
+        const dtype *drop_mask,
+        dtype drop_factor,
         dtype *lty,
         int count,
         int dim) {
+    if (drop_factor < 0) {
+        drop_factor = 0;
+    }
     NumberPointerArray ly_arr = ToNumberPointerArray(ly);
     int block_count = std::min(BLOCK_COUNT, (count * dim +
                 THREAD_COUNT_PER_BLOCK - 1) / THREAD_COUNT_PER_BLOCK);
     KernelCalculateLtyForUniBackward<<<block_count,
-        THREAD_COUNT_PER_BLOCK>>>(ly_arr.value, ty, y, lty, count, dim);
+        THREAD_COUNT_PER_BLOCK>>>(ly_arr.value, ty, y, drop_mask, drop_factor,
+                lty, count, dim);
 }
 
 __device__ int global_block_count[1000000];

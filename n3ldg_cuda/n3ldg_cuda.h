@@ -68,6 +68,7 @@ struct Tensor1D {
     Tensor1D(const Tensor1D &);
     Tensor1D(Tensor1D &&) = default;
     void init(int len);
+    void initOnDevice(int len);
     ~Tensor1D();
 
     void save(std::ofstream &s) const {
@@ -163,6 +164,7 @@ struct Tensor2D {
     Tensor2D(const Tensor2D &);
     Tensor2D(Tensor2D &&) = default;
     void init(int row, int col);
+    void initOnDevice(int row, int col);
     ~Tensor2D();
 
     void save(std::ofstream &s) const {

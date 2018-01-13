@@ -140,10 +140,14 @@ IntArray::~IntArray() {
 }
 
 void Tensor1D::init(int dim) {
-    CallCuda(MemoryPool::Ins().Malloc((void**)&value, dim * sizeof(dtype)));
-    this->dim = dim;
+    initOnDevice(dim);
     v = new dtype[dim];
     zero();
+}
+
+void Tensor1D::initOnDevice(int dim) {
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, dim * sizeof(dtype)));
+    this->dim = dim;
 }
 
 Tensor1D::Tensor1D(const Tensor1D &t) {
@@ -154,9 +158,10 @@ Tensor1D::Tensor1D(const Tensor1D &t) {
 }
 
 Tensor1D::~Tensor1D() {
-    assert(value != NULL && v != NULL);
     CallCuda(MemoryPool::Ins().Free(value));
-    delete []v;
+    if (v != NULL) {
+        delete []v;
+    }
 }
 
 void Tensor1D::copyFromHostToDevice() {
@@ -170,12 +175,17 @@ void Tensor1D::copyFromDeviceToHost() {
 }
 
 void Tensor2D::init(int row, int col) {
-    CallCuda(MemoryPool::Ins().Malloc((void**)&value, row * col * sizeof(dtype)));
+    initOnDevice(row, col);
     v = new dtype[row * col];
+    zero();
+}
+
+void Tensor2D::initOnDevice(int row, int col) {
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value,
+                row * col * sizeof(dtype)));
     this->row = row;
     this->col = col;
     this->size = row * col;
-    zero();
 }
 
 Tensor2D::Tensor2D(const Tensor2D &t) {
@@ -187,9 +197,10 @@ Tensor2D::Tensor2D(const Tensor2D &t) {
 }
 
 Tensor2D::~Tensor2D() {
-    assert(value != NULL && v != NULL);
     CallCuda(MemoryPool::Ins().Free(value));
-    delete [] v;
+    if (v != NULL) {
+        delete [] v;
+    }
 }
 
 void Tensor2D::copyFromHostToDevice() {
@@ -253,7 +264,7 @@ __global__ void PrintNums(dtype* p, int len) {
 
 
 void InitCuda() {
-    cudaSetDevice(0);
+    cudaSetDevice(1);
 
     cnmemDevice_t device;
     device.size = 10000000000;
@@ -454,25 +465,34 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
 
 //    return cudaMalloc(p, size);
 
-    bool found = false;
+    //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
+    //    busy_blocks_.size() << std::endl;
+    Profiler &profiler = Profiler::Ins();
+    profiler.BeginEvent("malloc");
+    int min_size = 1000000000;
+    std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
-        if (size <= it->size) {
-            busy_blocks_.push_back(*it);
-            *p = it->p;
-            free_blocks_.erase(it);
-            found = true;
-            break;
+        if (size <= it->size && min_size > it->size) {
+            min_size = it->size;
+            min_it = it;
         }
     }
 
     cudaError_t status = cudaSuccess;
-    if (!found) {
+    if (min_it != free_blocks_.end()) {
+        //std::cout << "cache hit" << std::endl;
+        busy_blocks_.push_back(*min_it);
+        *p = min_it->p;
+        free_blocks_.erase(min_it);
+    } else {
+        //std::cout << "no block, malloc" << std::endl;
         status = cudaMalloc(p, size);
         assert(status == cudaSuccess);
         MemoryBlock block(*p, size);
         busy_blocks_.push_back(block);
     }
 
+    profiler.EndEvent();
     return status;
 }
 
@@ -490,17 +510,20 @@ void MemoryPool::FreePool() {
 }
 
 cudaError_t MemoryPool::Free(void *p) {
+    Profiler &profiler = Profiler::Ins();
+    profiler.BeginEvent("free");
 //    CallCnmem(cnmemFree(p, NULL));
 
 //    return cudaFree(p);
 
-    for (auto it = busy_blocks_.begin(); it != busy_blocks_.end(); ++it) {
+    for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1; --it) {
         if (p == it->p) {
             free_blocks_.push_back(*it);
             busy_blocks_.erase(it);
             break;
         }
     }
+    profiler.EndEvent();
 
     return cudaSuccess;
 }

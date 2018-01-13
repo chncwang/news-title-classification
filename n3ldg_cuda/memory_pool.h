@@ -26,6 +26,7 @@ public:
         static MemoryPool *p;
         if (p == NULL) {
             p = new MemoryPool;
+            p->busy_blocks_.reserve(100000000);
         }
         return *p;
     }
@@ -37,7 +38,7 @@ public:
     void FreePool();
 private:
     MemoryPool() = default;
-    std::vector<MemoryBlock> free_blocks_;
+    std::list<MemoryBlock> free_blocks_;
     std::vector<MemoryBlock> busy_blocks_;
 };
 

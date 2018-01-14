@@ -26,7 +26,7 @@ public:
         static MemoryPool *p;
         if (p == NULL) {
             p = new MemoryPool;
-            p->busy_blocks_.reserve(100000000);
+            p->busy_blocks_.reserve(10000);
         }
         return *p;
     }

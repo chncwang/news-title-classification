@@ -19,9 +19,24 @@ struct NumberPointerArray {
 
     NumberPointerArray() = default;
     NumberPointerArray(NumberPointerArray&&) = default;
-    NumberPointerArray(const NumberPointerArray &) = delete;
+    NumberPointerArray(const NumberPointerArray &) {
+        abort();
+    }
     void init(dtype **host_arr, int len);
     ~NumberPointerArray();
+};
+
+struct NumberPointerPointerArray {
+    dtype ***value = NULL;
+    int len = 0;
+
+    NumberPointerPointerArray() = default;
+    NumberPointerPointerArray(NumberPointerPointerArray&&) = default;
+    NumberPointerPointerArray(const NumberPointerPointerArray &) {
+        abort();
+    }
+    void init(dtype ***host_arr, int len);
+    ~NumberPointerPointerArray();
 };
 
 struct NumberArray {
@@ -52,7 +67,9 @@ struct IntArray {
 
     IntArray() = default;
     IntArray(IntArray&&) = default;
-    IntArray(const IntArray &) = delete;
+    IntArray(const IntArray &) {
+        abort();
+    }
     void init(int *host_arr, int len);
     ~IntArray();
 };
@@ -336,6 +353,11 @@ void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
         int out_dim, int in_dim);
 void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
         dtype *mask);
+void ConcatForward(const std::vector<dtype**> &ins, const int *in_offsets,
+        std::vector<dtype*> &outs,
+        int count,
+        int in_count,
+        int out_dim);
 }
 
 #endif

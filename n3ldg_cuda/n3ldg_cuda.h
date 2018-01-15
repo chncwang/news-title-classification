@@ -354,7 +354,17 @@ void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
 void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
         dtype *mask);
 void ConcatForward(const std::vector<dtype**> &ins, const int *in_offsets,
+        const dtype *drop_mask,
+        dtype drop_factor,
         std::vector<dtype*> &outs,
+        int count,
+        int in_count,
+        int out_dim);
+void ConcatBackward(const std::vector<dtype*> &out_losses,
+        const int *in_offsets,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<dtype**> in_losses,
         int count,
         int in_count,
         int out_dim);

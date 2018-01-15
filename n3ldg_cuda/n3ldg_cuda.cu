@@ -34,8 +34,8 @@ using std::endl;
 #ifdef KERNEL_LOG
 #define  KernelPrintLine(format, ...)\
 {\
-    cuPrintf("block:x=%d,y=%d thread:x=%d,y=%d "#format"\n", blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y,\
-            __VA_ARGS__);\
+    cuPrintf("block:x=%d,y=%d thread:x=%d,y=%d "#format"\n", blockIdx.x,\
+            blockIdx.y, threadIdx.x, threadIdx.y,__VA_ARGS__);\
 }
 #else
 #define KernelPrintLine(format, ...)
@@ -106,8 +106,8 @@ void NumberPointerArray::init(dtype **host_arr, int len) {
 }
 
 NumberPointerArray::~NumberPointerArray() {
-    assert(value != NULL);
     CallCuda(MemoryPool::Ins().Free(value));
+   // CallCuda(cudaFree(value));
 }
 
 void NumberPointerPointerArray::init(dtype ***host_arr, int len) {
@@ -118,8 +118,9 @@ void NumberPointerPointerArray::init(dtype ***host_arr, int len) {
 }
 
 NumberPointerPointerArray::~NumberPointerPointerArray() {
-    assert(value != NULL);
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
 }
 
 void NumberArray::init(dtype *host_arr, int len) {
@@ -130,7 +131,6 @@ void NumberArray::init(dtype *host_arr, int len) {
 }
 
 NumberArray::~NumberArray() {
-    assert(value != NULL);
     CallCuda(MemoryPool::Ins().Free(value));
 }
 
@@ -142,7 +142,6 @@ void IntPointerArray::init(int **host_arr, int len) {
 }
 
 IntPointerArray::~IntPointerArray() {
-    assert(value != NULL);
     CallCuda(MemoryPool::Ins().Free(value));
 }
 
@@ -154,7 +153,6 @@ void IntArray::init(int *host_arr, int len) {
 }
 
 IntArray::~IntArray() {
-    assert(value != NULL);
     CallCuda(MemoryPool::Ins().Free(value));
 }
 
@@ -283,7 +281,8 @@ __global__ void PrintNums(dtype* p, int len) {
 
 
 void InitCuda() {
-    cudaSetDevice(0);
+    CallCuda(cudaSetDevice(0));
+    CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
 
     cnmemDevice_t device;
     device.size = 10000000000;
@@ -431,7 +430,7 @@ __global__ void KernelVerify(dtype *host, dtype *device, int len,
     if (index < len) {
         dtype loss = host[index] - device[index];
         if (DeviceAbs(loss) > 0.01) {
-           // *success = false;
+            *success = false;
             printf("KernelVerify %s: host:%f device:%f loss:%f\n",
                     message,
                     host[index],
@@ -457,22 +456,14 @@ bool Verify(dtype *host, dtype *device, int len, const char* message) {
                 (strlen(message) + 1) * sizeof(char), cudaMemcpyHostToDevice));
     bool success = true;
     bool *dev_success;
-//    CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, 8 * sizeof(bool)));
-//    CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
-//                cudaMemcpyHostToDevice));
+    CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, 8 * sizeof(bool)));
+    CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
+                cudaMemcpyHostToDevice));
     KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
             len, m, dev_success);
-//    CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
-//                cudaMemcpyDeviceToHost));
-//    MemoryPool::Ins().Free(dev_success);
-//    if (!success) {
-//        printf("host:\n");
-//        PrintNums<<<1, 1>>>(arr.value, len);
-//        cudaDeviceSynchronize();
-//        printf("device:\n");
-//        PrintNums<<<1, 1>>>(device, len);
-//        cudaDeviceSynchronize();
-//    }
+    CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
+                cudaMemcpyDeviceToHost));
+    MemoryPool::Ins().Free(dev_success);
     MemoryPool::Ins().Free(m);
     cudaDeviceSynchronize();
     cudaPrintfDisplay(stdout, true);
@@ -488,7 +479,7 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
     Profiler &profiler = Profiler::Ins();
-    profiler.BeginEvent("malloc");
+    //profiler.BeginEvent("malloc");
     int min_size = 1000000000;
     std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
@@ -500,19 +491,19 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
 
     cudaError_t status = cudaSuccess;
     if (min_it != free_blocks_.end()) {
-        std::cout << "cache hit" << std::endl;
+        //std::cout << "cache hit" << std::endl;
         busy_blocks_.push_back(*min_it);
         *p = min_it->p;
         free_blocks_.erase(min_it);
     } else {
-        std::cout << "no block, malloc" << std::endl;
+        //std::cout << "no block, malloc" << std::endl;
         status = cudaMalloc(p, size);
         CallCuda(status);
         MemoryBlock block(*p, size);
         busy_blocks_.push_back(block);
     }
 
-    profiler.EndEvent();
+    //profiler.EndEvent();
     return status;
 }
 
@@ -531,7 +522,7 @@ void MemoryPool::FreePool() {
 
 cudaError_t MemoryPool::Free(void *p) {
     Profiler &profiler = Profiler::Ins();
-    profiler.BeginEvent("free");
+    //profiler.BeginEvent("free");
 //    CallCnmem(cnmemFree(p, NULL));
 
 //    return cudaFree(p);
@@ -543,7 +534,7 @@ cudaError_t MemoryPool::Free(void *p) {
             break;
         }
     }
-    profiler.EndEvent();
+    //profiler.EndEvent();
 
     return cudaSuccess;
 }
@@ -700,44 +691,109 @@ void CalculateDropoutMask(dtype drop_factor, int count, int dim, dtype* mask) {
 }
 
 __global__ void KernelConcatForward(dtype ***ins, const int *in_offsets,
+        const dtype *drop_mask,
+        dtype drop_factor,
         dtype** outs,
         int count,
         int in_count,
         int out_dim) {
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
-    for (int i = 0; i < out_dim * count; i += step) {
+    for (int i = index; i < out_dim * count; i += step) {
         int out_dim_i = i % out_dim;
         int count_i = i / out_dim;
-        for (int j = 0; j < in_count; ++j) {
-            KernelPrintLine("offset:%d", in_offsets[j]);
-            if (j > 0)
-                printf("offset:%d\n", in_offsets[j]);
-            if (out_dim_i >= in_offsets[j]) {
-                int in_dim_i = out_dim_i - in_offsets[j];
-                outs[count_i][out_dim_i] = ins[count_i][j][in_dim_i];
-                break;
-            }
+        dtype dropout = drop_factor > 0 ?
+            drop_mask[out_dim_i * count + count_i] : 1;
+        if (dropout <= drop_factor) {
+            outs[count_i][out_dim_i] = 0.0f;
+        } else {
+            int offset_j = 0;
+            for (int j = 0; j < in_count; ++j) {
+                if (out_dim_i < in_offsets[j]) {
+                    break;
+                }
+                offset_j = j;
+        }
+            int in_dim_i = out_dim_i - in_offsets[offset_j];
+            outs[count_i][out_dim_i] = ins[count_i][offset_j][in_dim_i];
         }
     }
 }
 
 void ConcatForward(const std::vector<dtype**> &ins, const int *in_offsets,
+        const dtype *drop_mask,
+        dtype drop_factor,
         std::vector<dtype*> &outs,
         int count,
         int in_count,
         int out_dim) {
-    NumberPointerPointerArray ins_arr;
-    ins_arr.init(const_cast<dtype***>(ins.data()), count);
-    NumberPointerArray out_arr;
-    out_arr.init(const_cast<dtype**>(outs.data()), count);
+    assert(drop_factor < 1);
+    if (drop_factor < 0) {
+        drop_factor = 0;
+    }
+    NumberPointerPointerArray ins_arr = ToNumberPointerPointerArray(ins);
+    NumberPointerArray out_arr = ToNumberPointerArray(outs);
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT,
             (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
     KernelConcatForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(ins_arr.value,
-            in_offsets, out_arr.value, count, in_count, out_dim);
-    cudaPrintfDisplay(stdout, true);
-    cudaDeviceSynchronize();
+            in_offsets, drop_mask, drop_factor, out_arr.value, count, in_count,
+            out_dim);
+}
+
+__global__ void KernelConcatBackward(const dtype** out_losses,
+        const int *in_offsets,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        dtype*** in_losses,
+        int count,
+        int in_count,
+        int out_dim) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < out_dim * count; i += step) {
+        int out_dim_i = i % out_dim;
+        int count_i = i / out_dim;
+        dtype dropout = drop_factor > 0 ?
+            drop_mask[out_dim_i * count + count_i] : 1;
+        if (dropout > drop_factor) {
+            int offset_j = 0;
+            for (int j = 0; j < in_count; ++j) {
+                if (out_dim_i < in_offsets[j]) {
+                    break;
+                }
+                offset_j = j;
+            }
+            int in_dim_i = out_dim_i - in_offsets[offset_j];
+            in_losses[count_i][offset_j][in_dim_i] +=
+                out_losses[count_i][out_dim_i];
+            //outs[count_i][out_dim_i] = ins[count_i][offset_j][in_dim_i];
+        }
+    }
+}
+
+void ConcatBackward(const std::vector<dtype*> &out_losses,
+        const int *in_offsets,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<dtype**> in_losses,
+        int count,
+        int in_count,
+        int out_dim) {
+    assert(drop_factor < 1);
+    if (drop_factor < 0) {
+        drop_factor = 0;
+    }
+    NumberPointerArray out_loss_arr = ToNumberPointerArray(out_losses);
+    NumberPointerPointerArray in_loss_arr =
+        ToNumberPointerPointerArray(in_losses);
+    int len = count * out_dim;
+    int block_count = std::min(BLOCK_COUNT,
+            (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    KernelConcatBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+            const_cast<const dtype**>(out_loss_arr.value), in_offsets,
+            drop_mask, drop_factor, in_loss_arr.value, count, in_count,
+            out_dim);
 }
 
 }

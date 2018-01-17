@@ -309,6 +309,7 @@ struct Tensor2D {
     void copyFromDeviceToHost();
 };
 
+void Assert(bool v);
 void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
         Tensor2D &aux_square,
         int &iter,
@@ -368,6 +369,16 @@ void ConcatBackward(const std::vector<dtype*> &out_losses,
         int count,
         int in_count,
         int out_dim);
+void Memset(dtype *p, int len, dtype value);
+IntPointerArray ToIntPointerArray(const std::vector<int*> &vec);
+IntArray ToIntArray(const std::vector<int> vec);
+void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
+        int voc_size,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        int count,
+        int dim,
+        std::vector<dtype*> &vals);
 }
 
 #endif

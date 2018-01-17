@@ -228,6 +228,19 @@ void Tensor2D::copyFromDeviceToHost() {
     CallCuda(cudaMemcpy(v, value, size * sizeof(dtype), cudaMemcpyDeviceToHost));
 }
 
+void Assert(bool v) {
+    if (!v) exit(1);
+}
+
+__device__ inline void atomicAdd(float* address, float value) {
+    float old = value;  
+    float new_old;
+    do {
+        new_old = atomicExch(address, 0.0f);
+        new_old += old;
+    } while ((old = atomicExch(address, new_old))!=0.0f);
+};
+
 void Random(dtype *v, int len, dtype bound) {
     dtype *mem = (dtype*)malloc(len * sizeof(dtype));
     assert(mem != NULL);
@@ -273,7 +286,7 @@ __global__ void PrintPointers(void **p, int len) {
     }
 }
 
-__global__ void PrintNums(dtype* p, int len) {
+__global__ void PrintNums(const dtype* p, int len) {
     for (int i = 0; i < len; ++i) {
         printf("%f\n", p[i]);
     }
@@ -281,7 +294,7 @@ __global__ void PrintNums(dtype* p, int len) {
 
 
 void InitCuda() {
-    CallCuda(cudaSetDevice(0));
+    CallCuda(cudaSetDevice(1));
     CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
 
     cnmemDevice_t device;
@@ -619,7 +632,7 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
 
         if (threadIdx.x == 0) {
             block_sums[gridDim.y * blockIdx.x + blockIdx.y] = shared_arr[0];
-            if (atomicAdd(global_block_count + dim_i, 1) == gridDim.y - 1) {
+            if (::atomicAdd(global_block_count + dim_i, 1) == gridDim.y - 1) {
                 dtype sum = 0.0;
                 for (int i = 0; i < gridDim.y; ++i) {
                     sum += block_sums[gridDim.y * blockIdx.x + i];
@@ -764,10 +777,13 @@ __global__ void KernelConcatBackward(const dtype** out_losses,
                 }
                 offset_j = j;
             }
+            //KernelPrintLine("offset_j:%d", offset_j);
             int in_dim_i = out_dim_i - in_offsets[offset_j];
-            in_losses[count_i][offset_j][in_dim_i] +=
-                out_losses[count_i][out_dim_i];
-            //outs[count_i][out_dim_i] = ins[count_i][offset_j][in_dim_i];
+            //KernelPrintLine("in_dim_i:%d out_dim_i:%d", in_dim_i, out_dim_i);
+//            in_losses[count_i][offset_j][in_dim_i] +=
+//                out_losses[count_i][out_dim_i];
+            atomicAdd(in_losses[count_i][offset_j] + in_dim_i,
+                    out_losses[count_i][out_dim_i]);
         }
     }
 }
@@ -790,10 +806,82 @@ void ConcatBackward(const std::vector<dtype*> &out_losses,
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT,
             (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    //std::cout << "len:" << len << " block_count:" << block_count << std::endl;
     KernelConcatBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
             const_cast<const dtype**>(out_loss_arr.value), in_offsets,
             drop_mask, drop_factor, in_loss_arr.value, count, in_count,
             out_dim);
+}
+
+__global__ void KernelMemset(dtype *p, int len, dtype value) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < len; i+= step) {
+        p[i] = value;
+    }
+}
+
+void Memset(dtype *p, int len, dtype value) {
+    int block_count = std::min(BLOCK_COUNT,
+            (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    KernelMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(p, len, value);
+}
+
+__global__ void KernelLookupForward(const int *xids, const dtype *vocabulary,
+        int voc_size,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        int count,
+        int dim,
+        dtype **vals) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < count * dim; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        dtype dropout = drop_factor > 0 ?
+            drop_mask[dim_i * count + count_i] : 1;
+        if (drop_factor < dropout) {
+            int xid = xids[count_i];
+            if (xid >= 0) {
+                int voc_i = xid * dim + dim_i;
+                vals[count_i][dim_i] = vocabulary[voc_i];
+            } else {
+                vals[count_i][dim_i] = 0.0f;
+            }
+        } else {
+            vals[count_i][dim_i] = 0.0f;
+        }
+    }
+}
+
+__global__ void Print2DNums(dtype ** nums, int count, int dim) {
+    for (int i = 0; i < count; ++i) {
+        for (int j = 0; j < dim; ++j) {
+            printf("%f,", nums[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
+        int voc_size,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        int count,
+        int dim,
+        std::vector<dtype*> &vals) {
+    if (drop_factor < 0) {
+        drop_factor = 0;
+    }
+    int block_count = std::min(BLOCK_COUNT, (count * dim - 1 +
+                THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    Profiler &profiler = Profiler::Ins();
+    IntArray xid_arr = ToIntArray(xids);
+    NumberPointerArray val_arr = ToNumberPointerArray(vals);
+    KernelLookupForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(xid_arr.value,
+            vocabulary, voc_size, drop_mask, drop_factor,  count, dim,
+            const_cast<dtype**>(val_arr.value));
 }
 
 }

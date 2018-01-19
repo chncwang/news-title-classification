@@ -71,10 +71,27 @@ struct IntArray {
         abort();
     }
     void init(int *host_arr, int len);
+    void init(int len);
     ~IntArray();
 };
 
+struct BoolArray {
+    bool *value = NULL;
+    int len = 0;
+
+    BoolArray() = default;
+    BoolArray(BoolArray&&) = default;
+    BoolArray(const BoolArray &) {
+        abort();
+    }
+    void init(bool *host_arr, int len);
+    void copyFromHost(bool *host_arr);
+    ~BoolArray();
+};
+
 bool Verify(dtype *host, dtype* device, int len, const char* message);
+
+bool Verify(bool *host, bool *device, int len, const char* message);
 
 struct Tensor1D {
     dtype *value = NULL;
@@ -310,6 +327,9 @@ struct Tensor2D {
 };
 
 void Assert(bool v);
+void Memset(dtype *p, int len, dtype value);
+void Memset(bool *p, int len, bool value);
+
 void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
         Tensor2D &aux_square,
         int &iter,
@@ -369,16 +389,28 @@ void ConcatBackward(const std::vector<dtype*> &out_losses,
         int count,
         int in_count,
         int out_dim);
-void Memset(dtype *p, int len, dtype value);
 IntPointerArray ToIntPointerArray(const std::vector<int*> &vec);
-IntArray ToIntArray(const std::vector<int> vec);
+IntArray ToIntArray(const std::vector<int> &vec);
 void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
-        int voc_size,
         const dtype *drop_mask,
         dtype drop_factor,
         int count,
         int dim,
         std::vector<dtype*> &vals);
+void LookupBackward(const std::vector<int> &xids, int unknown_id,
+        bool fine_tune,
+        const std::vector<dtype*> &losses,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        int count,
+        int dim,
+        dtype *grad,
+        bool *indexers);
+void MaxPoolForward(const std::vector<dtype**> &ins, int count,
+        const std::vector<int> &in_counts,
+        int dim,
+        int *hit_inputs,
+        std::vector<dtype*> &outs);
 }
 
 #endif

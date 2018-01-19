@@ -1,10 +1,10 @@
-batchSize = 1000
+batchSize = 1
 wordEmbSize = 50
 dropProb = 0.5
 #wordCutOff = 4
 wordEmbFineTune = true
 maxIter = 1000
-hiddenSize = 1
+hiddenSize = 100
 maxInstance = -1
 outBest = .debug
 adaAlpha = 0.001

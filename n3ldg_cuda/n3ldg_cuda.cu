@@ -92,26 +92,43 @@ IntPointerArray ToIntPointerArray(const std::vector<int*> &vec) {
     return device_arr;
 }
 
-IntArray ToIntArray(const std::vector<int> vec) {
+IntArray ToIntArray(const std::vector<int> &vec) {
     IntArray device_arr;
     device_arr.init(const_cast<int*>(vec.data()), vec.size());
     return device_arr;
 }
 
+BoolArray ToBoolArray(const bool *vec, int len) {
+    BoolArray device_arr;
+    device_arr.init(const_cast<bool*>(vec), len);
+    return device_arr;
+}
+
 void NumberPointerArray::init(dtype **host_arr, int len) {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
     CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(dtype*)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype*),
                 cudaMemcpyHostToDevice));
     this->len = len;
 }
 
+void Memcpy(dtype *dest, dtype*src, int size, cudaMemcpyKind kind) {
+    CallCuda(cudaMemcpy(dest, src, size, kind));
+}
+
 NumberPointerArray::~NumberPointerArray() {
     CallCuda(MemoryPool::Ins().Free(value));
-   // CallCuda(cudaFree(value));
 }
 
 void NumberPointerPointerArray::init(dtype ***host_arr, int len) {
-    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(dtype*)));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(dtype**)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype*),
                 cudaMemcpyHostToDevice));
     this->len = len;
@@ -124,6 +141,10 @@ NumberPointerPointerArray::~NumberPointerPointerArray() {
 }
 
 void NumberArray::init(dtype *host_arr, int len) {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
     CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(dtype)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype),
                 cudaMemcpyHostToDevice));
@@ -135,6 +156,10 @@ NumberArray::~NumberArray() {
 }
 
 void IntPointerArray::init(int **host_arr, int len) {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
     CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(int*)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(int*),
                 cudaMemcpyHostToDevice));
@@ -146,13 +171,46 @@ IntPointerArray::~IntPointerArray() {
 }
 
 void IntArray::init(int *host_arr, int len) {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
     CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(int)));
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(int),
                 cudaMemcpyHostToDevice));
     this->len = len;
 }
 
+void IntArray::init(int len) {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(int)));
+    this->len = len;
+}
+
 IntArray::~IntArray() {
+    CallCuda(MemoryPool::Ins().Free(value));
+}
+
+void BoolArray::init(bool *host_arr, int len) {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(bool)));
+    CallCuda(cudaMemcpy(value, host_arr, len * sizeof(bool),
+                cudaMemcpyHostToDevice));
+    this->len = len;
+}
+
+void BoolArray::copyFromHost(bool *host_arr) {
+    CallCuda(cudaMemcpy(value, host_arr, len * sizeof(bool),
+                cudaMemcpyHostToDevice));
+}
+
+BoolArray::~BoolArray() {
     CallCuda(MemoryPool::Ins().Free(value));
 }
 
@@ -232,7 +290,13 @@ void Assert(bool v) {
     if (!v) exit(1);
 }
 
-__device__ inline void atomicAdd(float* address, float value) {
+void *Malloc(int size) {
+    void *p;
+    CallCuda(cudaMalloc(&p, size));
+    return p;
+}
+
+__device__ void DeviceAtomicAdd(float* address, float value) {
     float old = value;  
     float new_old;
     do {
@@ -294,7 +358,7 @@ __global__ void PrintNums(const dtype* p, int len) {
 
 
 void InitCuda() {
-    CallCuda(cudaSetDevice(1));
+    CallCuda(cudaSetDevice(0));
     CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
 
     cnmemDevice_t device;
@@ -462,13 +526,54 @@ bool Verify(dtype *host, dtype *device, int len, const char* message) {
     arr.init(host, len);
     int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
         THREAD_COUNT_PER_BLOCK;
-    char *m;
+    char *m = NULL;
     CallCuda(MemoryPool::Ins().Malloc((void**)&m,
                 (strlen(message) + 1) * sizeof(char)));
     CallCuda(cudaMemcpy(m, message,
                 (strlen(message) + 1) * sizeof(char), cudaMemcpyHostToDevice));
     bool success = true;
-    bool *dev_success;
+    bool *dev_success = NULL;
+    CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, 8 * sizeof(bool)));
+    CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
+                cudaMemcpyHostToDevice));
+    KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
+            len, m, dev_success);
+    CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
+                cudaMemcpyDeviceToHost));
+    MemoryPool::Ins().Free(dev_success);
+    MemoryPool::Ins().Free(m);
+    cudaDeviceSynchronize();
+    cudaPrintfDisplay(stdout, true);
+    return success;
+}
+
+__global__ void KernelVerify(bool *host, bool *device, int len,
+        const char *message, bool *success) {
+    int index = DeviceDefaultIndex();
+    if (index < len) {
+        if (host[index] != device[index]) {
+            *success = false;
+            printf("KernelVerify %s: host:%d device:%d \n", message,
+                    host[index],
+                    device[index]);
+            KernelPrintLine("KernelVerify: host:%d device:%d", host[index],
+                    device[index]);
+        }
+    }
+}
+
+bool Verify(bool *host, bool *device, int len, const char* message) {
+    BoolArray arr;
+    arr.init(host, len);
+    int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
+        THREAD_COUNT_PER_BLOCK;
+    char *m = NULL;
+    CallCuda(MemoryPool::Ins().Malloc((void**)&m,
+                (strlen(message) + 1) * sizeof(char)));
+    CallCuda(cudaMemcpy(m, message,
+                (strlen(message) + 1) * sizeof(char), cudaMemcpyHostToDevice));
+    bool success = true;
+    bool *dev_success = NULL;
     CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, 8 * sizeof(bool)));
     CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
                 cudaMemcpyHostToDevice));
@@ -484,6 +589,7 @@ bool Verify(dtype *host, dtype *device, int len, const char* message) {
 }
 
 cudaError_t MemoryPool::Malloc(void **p, int size) {
+    assert(*p == NULL);
     //CallCnmem(cnmemMalloc(p, size, NULL));
     //return cudaSuccess;
 
@@ -611,9 +717,6 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
     __shared__ volatile dtype shared_arr[THREAD_COUNT_PER_BLOCK];
 
     int count_i = blockIdx.y * blockDim.x + threadIdx.x;
-    //if (count >= THREAD_COUNT_PER_BLOCK) {
-    //    KernelPrintLine("count_i:%d", count_i);
-    //}
     int dim_i = blockIdx.x;
     if (dim_i < out_dim) {
         if (threadIdx.x == 0 && blockIdx.y == 0) {
@@ -632,7 +735,7 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
 
         if (threadIdx.x == 0) {
             block_sums[gridDim.y * blockIdx.x + blockIdx.y] = shared_arr[0];
-            if (::atomicAdd(global_block_count + dim_i, 1) == gridDim.y - 1) {
+            if (atomicAdd(global_block_count + dim_i, 1) == gridDim.y - 1) {
                 dtype sum = 0.0;
                 for (int i = 0; i < gridDim.y; ++i) {
                     sum += block_sums[gridDim.y * blockIdx.x + i];
@@ -782,7 +885,7 @@ __global__ void KernelConcatBackward(const dtype** out_losses,
             //KernelPrintLine("in_dim_i:%d out_dim_i:%d", in_dim_i, out_dim_i);
 //            in_losses[count_i][offset_j][in_dim_i] +=
 //                out_losses[count_i][out_dim_i];
-            atomicAdd(in_losses[count_i][offset_j] + in_dim_i,
+            DeviceAtomicAdd(in_losses[count_i][offset_j] + in_dim_i,
                     out_losses[count_i][out_dim_i]);
         }
     }
@@ -827,8 +930,21 @@ void Memset(dtype *p, int len, dtype value) {
     KernelMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(p, len, value);
 }
 
+__global__ void KernelMemset(bool *p, int len, bool value) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < len; i+= step) {
+        p[i] = value;
+    }
+}
+
+void Memset(bool *p, int len, bool value) {
+    int block_count = std::min(BLOCK_COUNT,
+            (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    KernelMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(p, len, value);
+}
+
 __global__ void KernelLookupForward(const int *xids, const dtype *vocabulary,
-        int voc_size,
         const dtype *drop_mask,
         dtype drop_factor,
         int count,
@@ -865,7 +981,6 @@ __global__ void Print2DNums(dtype ** nums, int count, int dim) {
 }
 
 void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
-        int voc_size,
         const dtype *drop_mask,
         dtype drop_factor,
         int count,
@@ -880,8 +995,116 @@ void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
     IntArray xid_arr = ToIntArray(xids);
     NumberPointerArray val_arr = ToNumberPointerArray(vals);
     KernelLookupForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(xid_arr.value,
-            vocabulary, voc_size, drop_mask, drop_factor,  count, dim,
+            vocabulary, drop_mask, drop_factor,  count, dim,
             const_cast<dtype**>(val_arr.value));
+}
+
+__global__ void KernelLookupBackward(const int *xids, int unknown_id,
+        bool fine_tune,
+        const dtype** losses,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        int count,
+        int dim,
+        dtype *grad,
+        bool *indexers) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < count * dim; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        int xid = xids[count_i];
+        if (xid == unknown_id || fine_tune) {
+            assert(xid >= 0);
+            if (dim_i == 0) {
+                indexers[xid] = true;
+            }
+            dtype dropout = drop_factor > 0 ?
+                drop_mask[dim_i * count + count_i] : 1;
+            if (drop_factor < dropout) {
+                DeviceAtomicAdd(grad + xid * dim + dim_i,
+                        losses[count_i][dim_i]);
+            }
+        }
+    }
+}
+
+void LookupBackward(const std::vector<int> &xids, int unknown_id,
+        bool fine_tune,
+        const std::vector<dtype*> &losses,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        int count,
+        int dim,
+        dtype *grad,
+        bool *indexers) {
+    int block_count = std::min((count * dim - 1 + THREAD_COUNT_PER_BLOCK) /
+            THREAD_COUNT_PER_BLOCK, BLOCK_COUNT);
+    IntArray xid_arr = ToIntArray(xids);
+    NumberPointerArray loss_arr = ToNumberPointerArray(losses);
+    KernelLookupBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+            const_cast<const int *>(xid_arr.value),
+            unknown_id,
+            fine_tune,
+            const_cast<const dtype**>(loss_arr.value),
+            drop_mask,
+            drop_factor,
+            count,
+            dim,
+            grad,
+            indexers);
+}
+
+__global__ void KernelMaxPoolForward(const dtype ***ins, int count,
+        int *in_counts,
+        int dim,
+        int* hit_inputs,
+        dtype** outs) {
+    __shared__ volatile dtype shared_arr[THREAD_COUNT_PER_BLOCK];
+    __shared__ volatile dtype shared_indexers[THREAD_COUNT_PER_BLOCK];
+    int batch_i = blockIdx.y;
+    int in_count = in_counts[batch_i];
+    int in_count_i = threadIdx.x;
+    int dim_i = blockIdx.x;
+    shared_arr[threadIdx.x] = in_count_i < in_count ?
+        ins[batch_i][in_count_i][dim_i] : -1000000000.0f;
+    shared_indexers[threadIdx.x] = threadIdx.x;
+    __syncthreads();
+
+    for (int i = (THREAD_COUNT_PER_BLOCK >> 1); i > 0;i >>=1) {
+        if (threadIdx.x < i) {
+            int plus_i = threadIdx.x + i;
+            if (shared_arr[threadIdx.x] < shared_arr[plus_i]) {
+                shared_arr[threadIdx.x] = shared_arr[plus_i];
+                shared_indexers[threadIdx.x] = plus_i;
+            }
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        hit_inputs[batch_i] = shared_indexers[0];
+        outs[batch_i][dim_i] = shared_arr[0];
+    }
+}
+
+void MaxPoolForward(const std::vector<dtype**> &ins, int count,
+        const std::vector<int> &in_counts,
+        int dim,
+        int *hit_inputs,
+        std::vector<dtype*> &outs) {
+    IntArray in_count_arr = ToIntArray(in_counts);
+    NumberPointerPointerArray in_arr = ToNumberPointerPointerArray(ins);
+    NumberPointerArray out_arr = ToNumberPointerArray(outs);
+
+    dim3 block_dim(dim, count, 1);
+    KernelMaxPoolForward<<<block_dim, THREAD_COUNT_PER_BLOCK>>>(
+            const_cast<const dtype***>(in_arr.value),
+            count,
+            in_count_arr.value,
+            dim,
+            hit_inputs,
+            out_arr.value);
 }
 
 }

@@ -411,6 +411,10 @@ void MaxPoolForward(const std::vector<dtype**> &ins, int count,
         int dim,
         int *hit_inputs,
         std::vector<dtype*> &outs);
+void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
+        int count, 
+        int dim,
+        std::vector<dtype**> &in_losses);
 }
 
 #endif

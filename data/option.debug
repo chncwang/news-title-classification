@@ -1,12 +1,12 @@
-batchSize = 1
+hiddenSize = 100
+batchSize = 64
 wordEmbSize = 50
 dropProb = 0.5
 #wordCutOff = 4
 wordEmbFineTune = true
 maxIter = 1000
-hiddenSize = 100
 maxInstance = -1
 outBest = .debug
 adaAlpha = 0.001
-wordcontext = 0
+wordcontext = 2
 #wordFile = /home/wqs/ctb60.50d.vec

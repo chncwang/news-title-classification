@@ -1,4 +1,5 @@
 #include "n3ldg_cuda.h"
+#include <array>
 #include <cstdlib>
 #include <vector>
 #include <algorithm>
@@ -358,14 +359,15 @@ __global__ void PrintNums(const dtype* p, int len) {
 
 
 void InitCuda() {
-    CallCuda(cudaSetDevice(0));
-    CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
-
+#if DEVICE_MEMORY == 0
     cnmemDevice_t device;
-    device.size = 10000000000;
+    device.size = 2000000000;
     device.device = 1;
-    //cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
-
+    cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
+#else
+    CallCuda(cudaSetDevice(1));
+#endif
+    CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
     CallCuda(cudaPrintfInit());
 }
 
@@ -506,7 +508,7 @@ __global__ void KernelVerify(dtype *host, dtype *device, int len,
     int index = DeviceDefaultIndex();
     if (index < len) {
         dtype loss = host[index] - device[index];
-        if (DeviceAbs(loss) > 0.01) {
+        if (DeviceAbs(loss) > 0.001) {
             *success = false;
             printf("KernelVerify %s: host:%f device:%f loss:%f\n",
                     message,
@@ -590,11 +592,12 @@ bool Verify(bool *host, bool *device, int len, const char* message) {
 
 cudaError_t MemoryPool::Malloc(void **p, int size) {
     assert(*p == NULL);
-    //CallCnmem(cnmemMalloc(p, size, NULL));
-    //return cudaSuccess;
-
-//    return cudaMalloc(p, size);
-
+#if DEVICE_MEMORY == 0
+    CallCnmem(cnmemMalloc(p, size, NULL));
+    return cudaSuccess;
+#elif DEVICE_MEMORY == 1
+    return cudaMalloc(p, size);
+#else
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
     Profiler &profiler = Profiler::Ins();
@@ -624,6 +627,7 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
 
     //profiler.EndEvent();
     return status;
+#endif
 }
 
 void MemoryPool::FreePool() {
@@ -640,22 +644,22 @@ void MemoryPool::FreePool() {
 }
 
 cudaError_t MemoryPool::Free(void *p) {
-    Profiler &profiler = Profiler::Ins();
-    //profiler.BeginEvent("free");
-//    CallCnmem(cnmemFree(p, NULL));
-
-//    return cudaFree(p);
-
-    for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1; --it) {
+#if DEVICE_MEMORY == 0
+    CallCnmem(cnmemFree(p, NULL));
+#elif DEVICE_MEMORY == 1
+    return cudaFree(p);
+#else
+    for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1;
+            --it) {
         if (p == it->p) {
             free_blocks_.push_back(*it);
             busy_blocks_.erase(it);
             break;
         }
     }
-    //profiler.EndEvent();
 
     return cudaSuccess;
+#endif
 }
 
 void Profiler::EndCudaEvent() {
@@ -740,14 +744,14 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
                 for (int i = 0; i < gridDim.y; ++i) {
                     sum += block_sums[gridDim.y * blockIdx.x + i];
                 }
-                b[dim_i] += sum;
+                DeviceAtomicAdd(b + dim_i, sum);
             }
         }
     } else {
         if (count_i < count) {
             dim_i -= out_dim;
             int lx_index = dim_i * count + count_i;
-            losses[count_i][dim_i] += lx[lx_index];
+            DeviceAtomicAdd(losses[count_i] + dim_i, lx[lx_index]);
         }
     }
 }
@@ -1071,7 +1075,7 @@ __global__ void KernelMaxPoolForward(const dtype ***ins, int count,
     shared_indexers[threadIdx.x] = threadIdx.x;
     __syncthreads();
 
-    for (int i = (THREAD_COUNT_PER_BLOCK >> 1); i > 0;i >>=1) {
+    for (int i = (blockDim.x >> 1); i > 0;i >>=1) {
         if (threadIdx.x < i) {
             int plus_i = threadIdx.x + i;
             if (shared_arr[threadIdx.x] < shared_arr[plus_i]) {
@@ -1083,7 +1087,7 @@ __global__ void KernelMaxPoolForward(const dtype ***ins, int count,
     }
 
     if (threadIdx.x == 0) {
-        hit_inputs[batch_i] = shared_indexers[0];
+        hit_inputs[batch_i * dim + dim_i] = shared_indexers[0];
         outs[batch_i][dim_i] = shared_arr[0];
     }
 }
@@ -1097,14 +1101,51 @@ void MaxPoolForward(const std::vector<dtype**> &ins, int count,
     NumberPointerPointerArray in_arr = ToNumberPointerPointerArray(ins);
     NumberPointerArray out_arr = ToNumberPointerArray(outs);
 
+    int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
+    int thread_count = 16;
+    while (max_in_count > thread_count) {
+        thread_count <<= 1;
+    }
+
     dim3 block_dim(dim, count, 1);
-    KernelMaxPoolForward<<<block_dim, THREAD_COUNT_PER_BLOCK>>>(
+    KernelMaxPoolForward<<<block_dim, thread_count>>>(
             const_cast<const dtype***>(in_arr.value),
             count,
             in_count_arr.value,
             dim,
             hit_inputs,
             out_arr.value);
+}
+
+__global__ void KernelMaxPoolBackward(const dtype ** losses,
+        const int *hit_inputs, int count, int dim, dtype ***in_losses) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < dim * count; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        int input_i = hit_inputs[i];
+        DeviceAtomicAdd(in_losses[count_i][input_i] + dim_i,
+                losses[count_i][dim_i]);
+    }
+}
+
+void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
+        int count, 
+        int dim,
+        std::vector<dtype**> &in_losses) {
+    NumberPointerArray loss_arr = ToNumberPointerArray(losses);
+    NumberPointerPointerArray in_loss_arr = ToNumberPointerPointerArray(
+            in_losses);
+    int block_count = (count * dim - 1 + THREAD_COUNT_PER_BLOCK) /
+        THREAD_COUNT_PER_BLOCK;
+    block_count = std::min(block_count, BLOCK_COUNT);
+    KernelMaxPoolBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+            const_cast<const dtype**>(loss_arr.value),
+            hit_inputs,
+            count,
+            dim,
+            in_loss_arr.value);
 }
 
 }

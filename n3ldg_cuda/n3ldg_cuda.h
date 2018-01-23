@@ -61,6 +61,21 @@ struct IntPointerArray {
     ~IntPointerArray();
 };
 
+struct DeviceInt {
+    int *value = NULL;
+    int v = 0;
+
+    DeviceInt() = default;
+    DeviceInt(DeviceInt &&) = default;
+    DeviceInt(const DeviceInt&) {
+        abort();
+    }
+
+    void init();
+    void copyFromDeviceToHost();
+    ~DeviceInt();
+};
+
 struct IntArray {
     int *value = NULL;
     int len = 0;
@@ -345,6 +360,8 @@ void InitCuda();
 void EndCuda();
 void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
         int len);
+void CopyFromOneVectorToMultiVectors(const dtype *src,
+        const std::vector<dtype*> &dest, int count, int len);
 void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2,
         int len, bool is_being_trained, dtype drop_factor,
         const dtype *drop_mask);
@@ -415,6 +432,14 @@ void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
         int count, 
         int dim,
         std::vector<dtype**> &in_losses);
+void CalculateLyForLinearBackward(const std::vector<dtype*> &ly_vec, dtype *ly,
+        int count, int dim);
+void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
+        int *correct_count,
+        const std::vector<int> &answers,
+        int batchsize,
+        int count,
+        int dim);
 }
 
 #endif

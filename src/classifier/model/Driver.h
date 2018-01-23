@@ -79,14 +79,44 @@ public:
 
         }
         _cg.compute();
-
+#if USE_GPU
+        std::vector<Node*> outputs;
+        outputs.reserve(example_num);
+        std::vector<int> answers;
+        answers.reserve(example_num);
+        for (int count = 0; count < example_num; count++) {
+            const Example &example = examples[count];
+            answers.push_back(static_cast<int>(example.m_category));
+            outputs.push_back(&_builders[count]._neural_output);
+        }
+        n3ldg_cuda::DeviceInt correct_count;
+        correct_count.init();
+        _modelparams.loss.loss(outputs, answers, correct_count, example_num);
+        correct_count.copyFromDeviceToHost();
+#if TEST_CUDA
+        int previous_correct_count = _metric.correct_label_count;
         for (int count = 0; count < example_num; count++) {
             const Example &example = examples[count];
             cost += _modelparams.loss.loss(&_builders[count]._neural_output,
                 example.m_category, _metric, example_num);
         }
+        n3ldg_cuda::Assert(correct_count.v == _metric.correct_label_count -
+                previous_correct_count);
+        for (int count = 0; count < example_num; count++) {
+            n3ldg_cuda::Assert(_builders[count]._neural_output.loss.verify(
+                        "softmax"));
+        }
+#endif
+        _metric.overall_label_count += example_num;
+        _metric.correct_label_count += correct_count.v;
+#else
+        for (int count = 0; count < example_num; count++) {
+            const Example &example = examples[count];
+            cost += _modelparams.loss.loss(&_builders[count]._neural_output,
+                example.m_category, _metric, example_num);
+        }
+#endif
         _cg.backward();
-
         return cost;
     }
 

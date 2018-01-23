@@ -5,11 +5,32 @@
 #include "Metric.h"
 #include "Node.h"
 #include "Category.h"
-
+#include "profiler.h"
+#if USE_GPU
+#include "n3ldg_cuda.h"
+#endif
 
 class MySoftMaxLoss {
 public:
+#if USE_GPU
+    dtype loss(const std::vector<PNode> &x, const std::vector<int> &answers,
+            n3ldg_cuda::DeviceInt &correct,
+            int batchsize = 1) {
+        std::vector<dtype*> vals, losses;
+        vals.reserve(x.size());
+        losses.reserve(x.size());
+        for (PNode n : x) {
+            vals.push_back(n->val.value);
+            losses.push_back(n->loss.value);
+        }
+        n3ldg_cuda::SoftMaxLoss(vals, losses, correct.value, answers,
+                batchsize, x.size(), x.at(0)->dim);
+        return -1.0f;
+    }
+#endif
     inline dtype loss(PNode x, Category answer, Metric& metric, int batchsize = 1) {
+        n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
+        profiler.BeginEvent("MySoftMaxLoss loss");
         int nDim = x->dim;
         int labelsize = 32;
         if (labelsize != nDim) {
@@ -45,6 +66,7 @@ public:
             x->loss[i] = (scores[i] / sum2 - t) / batchsize;
         }
 
+        profiler.EndEvent();
         return cost;
     }
 

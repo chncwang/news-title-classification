@@ -14,6 +14,7 @@
 #include "profiler.h"
 #include "cnmem.h"
 #include <string>
+#include <cstdint>
 
 namespace n3ldg_cuda {
 
@@ -24,10 +25,12 @@ using std::endl;
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
 #define cuda_tanh(x) tanhf(x)
+#define cuda_exp(x) __expf(x)
 #else
 #define cuda_sqrt(x) sqrt(x)
 #define cuda_pow(x, y) pow(x, y)
 #define cuda_tanh(x) tanh(x)
+#define cuda_exp(x) exp(x)
 #endif
 
 #define KERNEL_LOG
@@ -154,6 +157,24 @@ void NumberArray::init(dtype *host_arr, int len) {
 
 NumberArray::~NumberArray() {
     CallCuda(MemoryPool::Ins().Free(value));
+}
+
+void DeviceInt::init() {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, sizeof(int)));
+}
+
+void DeviceInt::copyFromDeviceToHost() {
+    CallCuda(cudaMemcpy(&v, value, sizeof(int), cudaMemcpyDeviceToHost));
+}
+
+DeviceInt::~DeviceInt() {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
 }
 
 void IntPointerArray::init(int **host_arr, int len) {
@@ -378,19 +399,43 @@ void EndCuda() {
 
 __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
         dtype *dest, int count, int len) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index < len * count) {
-        int count_i = index / len;
-        int len_i = index % len;
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < len * count; i += step) {
+        int count_i = i / len;
+        int len_i = i % len;
         dest[count_i * len + len_i] = src[len_i];
     }
 }
 
 void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
         int len) {
+    int block_count = (len * count - 1 + THREAD_COUNT_PER_BLOCK) /
+        THREAD_COUNT_PER_BLOCK;
+    block_count = std::min(block_count, BLOCK_COUNT);
     KernelCopyFromOneVectorToMultiVectors<<<
-        (len * count - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK,
-    THREAD_COUNT_PER_BLOCK>>>(src, dest, count, len);
+        block_count, THREAD_COUNT_PER_BLOCK>>>(src, dest, count, len);
+}
+
+__global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
+        dtype **dest, int count, int len) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < count * len; i += step) {
+        int count_i = i % count;
+        int len_i = i / count;
+        dest[count_i][len_i] = src[i];
+    }
+}
+
+void CopyFromOneVectorToMultiVectors(const dtype *src,
+        const std::vector<dtype*> &dest, int count, int len) {
+    NumberPointerArray dest_arr = ToNumberPointerArray(dest);
+    int block_count = (len * count - 1 + THREAD_COUNT_PER_BLOCK) /
+        THREAD_COUNT_PER_BLOCK;
+    block_count = std::min(block_count, BLOCK_COUNT);
+    KernelCopyFromOneVectorToMultiVectors<<<block_count,
+    THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, count, len);
 }
 
 __global__ void KernelTanh(const dtype *src, dtype**dest, dtype* dest2,
@@ -706,6 +751,27 @@ void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
     KernelCalculateLtyForUniBackward<<<block_count,
         THREAD_COUNT_PER_BLOCK>>>(ly_arr.value, ty, y, drop_mask, drop_factor,
                 lty, count, dim);
+}
+
+__global__ void KernelCalculateLyForLinearBackward(const dtype *const*ly_vec,
+        dtype *ly, int count, int dim) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    int len = count * dim;
+    for (int i = index; i < len; i += step) {
+        int count_i = i % count;
+        int dim_i = i / count;
+        ly[i] = ly_vec[count_i][dim_i];
+    }
+}
+
+void CalculateLyForLinearBackward(const std::vector<dtype*> &ly_vec, dtype *ly,
+        int count, int dim) {
+    NumberPointerArray ly_arr = ToNumberPointerArray(ly_vec);
+    int block_count = std::min(BLOCK_COUNT, (count * dim +
+                THREAD_COUNT_PER_BLOCK - 1) / THREAD_COUNT_PER_BLOCK);
+    KernelCalculateLyForLinearBackward<<<block_count,
+        THREAD_COUNT_PER_BLOCK>>>(ly_arr.value, ly, count, dim);
 }
 
 __device__ int global_block_count[1000000];
@@ -1071,7 +1137,7 @@ __global__ void KernelMaxPoolForward(const dtype ***ins, int count,
     int in_count_i = threadIdx.x;
     int dim_i = blockIdx.x;
     shared_arr[threadIdx.x] = in_count_i < in_count ?
-        ins[batch_i][in_count_i][dim_i] : -1000000000.0f;
+        ins[batch_i][in_count_i][dim_i] : -INFINITY;
     shared_indexers[threadIdx.x] = threadIdx.x;
     __syncthreads();
 
@@ -1102,7 +1168,7 @@ void MaxPoolForward(const std::vector<dtype**> &ins, int count,
     NumberPointerArray out_arr = ToNumberPointerArray(outs);
 
     int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
-    int thread_count = 16;
+    int thread_count = 8;
     while (max_in_count > thread_count) {
         thread_count <<= 1;
     }
@@ -1146,6 +1212,91 @@ void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
             count,
             dim,
             in_loss_arr.value);
+}
+
+__global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
+        int *correct_count, int *answers, int batchsize, int count, int dim) {
+    volatile __shared__ int opt_label;
+    volatile extern __shared__ char shared_arr[];
+    volatile dtype * shared_val = (dtype*)(shared_arr);
+    volatile int32_t *max_indexes =
+        (int32_t*)(shared_arr + sizeof(dtype) * blockDim.x);
+    volatile dtype * scores = (dtype*)(shared_arr + (sizeof(dtype) +
+                sizeof(int32_t)) * blockDim.x);
+    volatile dtype * scores_sum = (dtype*)(shared_arr + (2 * sizeof(dtype) +
+                sizeof(int32_t)) * blockDim.x);
+    int dim_i = threadIdx.x;
+    int count_i = blockIdx.x;
+    //printf("count_i:%d\n", count_i);
+    if (count_i == 0 && dim_i == 0) {
+        *correct_count = 0;
+    }
+    shared_val[dim_i] = dim_i < dim ? vals[count_i][dim_i] : -INFINITY;
+    //printf("shared_val:%f dim_i:%d\n", shared_val[dim_i], dim_i);
+    max_indexes[dim_i] = dim_i;
+    __syncthreads();
+
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        if (shared_val[threadIdx.x + i] > shared_val[threadIdx.x]) {
+            shared_val[threadIdx.x] = shared_val[threadIdx.x + i];
+            max_indexes[threadIdx.x] = max_indexes[threadIdx.x + i];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        opt_label = max_indexes[0];
+        //printf("opt_label:%d\n", opt_label);
+        if (answers[count_i] == opt_label) {
+            atomicAdd(correct_count, 1);
+        }
+    }
+    __syncthreads();
+
+    //printf("opt_label:%d\n", opt_label);
+    dtype max_score = vals[count_i][opt_label];
+    //printf("max_score:%f\n", max_score);
+    dtype score = dim_i < dim ? cuda_exp(vals[count_i][dim_i] - max_score) :
+        0.0f;
+    //printf("score:%f\n", score);
+    scores[dim_i] = score;
+    scores_sum[dim_i] = score;
+
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        scores_sum[threadIdx.x] = scores_sum[threadIdx.x] +
+            scores_sum[threadIdx.x + i];
+        __syncthreads();
+    }
+
+    if (dim_i < dim) {
+        //printf("count_i:%d dim_i:%d scores_sum[0]:%f answer:%d batchsize:%d\n", count_i, dim_i, scores_sum[0], answers[count_i], batchsize);
+        losses[count_i][dim_i] = (scores[dim_i] / scores_sum[0] -
+                (dim_i == answers[count_i] ? 1 : 0)) / batchsize;
+    }
+}
+
+void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
+        int *correct_count,
+        const std::vector<int> &answers,
+        int batchsize,
+        int count,
+        int dim) {
+    int thread_count = 1;
+    while (dim > thread_count) {
+        thread_count <<= 1;
+    }
+    NumberPointerArray val_arr = ToNumberPointerArray(vals);
+    NumberPointerArray loss_arr = ToNumberPointerArray(losses);
+    IntArray answer_arr = ToIntArray(answers);
+    KernelSoftMaxLoss<<<count, thread_count,
+        (sizeof(int32_t) + 3 * sizeof(dtype)) * thread_count>>>(
+            const_cast<const dtype **>(val_arr.value),
+            const_cast<dtype **>(loss_arr.value),
+            correct_count,
+            answer_arr.value,
+            batchsize,
+            count,
+            dim);
 }
 
 }

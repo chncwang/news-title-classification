@@ -46,6 +46,11 @@ public:
             abort();
         }
         _modelparams.exportModelParams(_ada);
+#if USE_GPU
+        for (BaseParam *p : _ada._params) {
+            p->copyFromDeviceToHost();
+        }
+#endif
         _modelparams.exportCheckGradParams(_checkgrad);
         _builders.resize(_hyperparams.batch);
 
@@ -58,10 +63,46 @@ public:
             _hyperparams.adaEps);
     }
 
+#if USE_GPU
+    void clearValueOnDevice() {
+        std::vector<Node*> inputs, concats, buckets, unis, max_pools, linears;
+        for (GraphBuilder &bu : _builders) {
+            std::vector<Node*> inputs_t =
+                toPointers<LookupNode, Node>(bu._input_nodes);
+            for (Node *p : inputs_t) {
+                inputs.push_back(p);
+            }
+
+            std::vector<Node *> concat_t = toPointers<ConcatNode,
+                Node>(bu._window_builder._outputs);
+            for (Node *p : concat_t) {
+                concats.push_back(p);
+            }
+
+            buckets.push_back(&bu._window_builder._bucket);
+
+            std::vector<Node *> unis_t = toPointers<UniNode,
+                Node>(bu._uni_nodes);
+            for (Node *p: unis_t) {
+                unis.push_back(p);
+            }
+
+            max_pools.push_back(&bu._max_pool_node);
+            linears.push_back(&bu._neural_output);
+        }
+        clearNodes(inputs, _hyperparams.wordDim);
+        clearNodes(max_pools, _hyperparams.hiddenSize);
+        clearNodes(concats, (1 + 2 * _hyperparams.wordContext) *
+                _hyperparams.wordDim);
+        clearNodes(buckets, _hyperparams.wordDim);
+        clearNodes(unis, _hyperparams.hiddenSize);
+    }
+#endif
 
     inline dtype train(const vector<Example> &examples, int iter) {
         resetEval();
         _cg.clearValue();
+        clearValueOnDevice();
         int example_num = examples.size();
         if (example_num > _builders.size()) {
             std::cout << "Driver train - input example number larger than predefined batch number example_num:" << example_num
@@ -143,8 +184,17 @@ public:
 
 
     void updateModel() {
-        //_ada.update();
+#if USE_GPU
+        for (BaseParam *p : _ada._params) {
+            p->copyFromDeviceToHost();
+        }
+#endif
         _ada.updateAdam(10);
+#if USE_GPU
+        for (BaseParam *p : _ada._params) {
+            p->copyFromHostToDevice();
+        }
+#endif
     }
 
     void checkgrad(const vector<Example> &examples, int iter) {

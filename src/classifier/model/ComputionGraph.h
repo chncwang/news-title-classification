@@ -35,6 +35,7 @@ public:
             n.init(opts.wordDim, opts.dropProb);
             n.setParam(&model.words);
         }
+
         _window_builder.init(opts.wordDim, opts.wordContext);
         for (UniNode &n : _uni_nodes) {
             n.init(opts.hiddenSize, opts.dropProb);

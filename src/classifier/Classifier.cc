@@ -157,7 +157,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
     static vector<Example> subExamples;
     int devNum = devExamples.size(), testNum = testExamples.size();
     int non_exceeds_time = 0;
-    for (int iter = 0; iter < 1; ++iter) {
+    for (int iter = 0; iter < 100000; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
         for (int i = 0; i < trainExamples.size(); ++i) {
@@ -201,10 +201,6 @@ void Classifier::train(const string &trainFile, const string &devFile,
             << "s" << std::endl;
         float accuracy = metric.getAccuracy();
         std::cout << "train set acc:" << metric.getAccuracy() << std::endl;
-        if (accuracy >= 0.95) {
-            std::cout << "train set is good enough, stop" << std::endl;
-            exit(0);
-        }
         continue;
 
         float dev_acc = 0.0;

@@ -232,6 +232,11 @@ void BoolArray::copyFromHost(bool *host_arr) {
                 cudaMemcpyHostToDevice));
 }
 
+void BoolArray::copyToHost(bool *host_arr) {
+    CallCuda(cudaMemcpy(host_arr, value, len * sizeof(bool),
+                cudaMemcpyDeviceToHost));
+}
+
 BoolArray::~BoolArray() {
     CallCuda(MemoryPool::Ins().Free(value));
 }
@@ -309,7 +314,9 @@ void Tensor2D::copyFromDeviceToHost() {
 }
 
 void Assert(bool v) {
+#if TEST_CUDA
     if (!v) exit(1);
+#endif
 }
 
 void *Malloc(int size) {
@@ -372,12 +379,27 @@ __global__ void PrintPointers(void **p, int len) {
     }
 }
 
-__global__ void PrintNums(const dtype* p, int len) {
+__global__ void KernelPrintNums(const dtype* p, int len) {
     for (int i = 0; i < len; ++i) {
         printf("%f\n", p[i]);
     }
 }
 
+void PrintNums(const dtype* p, int len) {
+    KernelPrintNums<<<1, 1>>>(p, len);
+    cudaDeviceSynchronize();
+}
+
+__global__ void KernelPrintInts(const int* p, int len) {
+    for (int i = 0; i < len; ++i) {
+        printf("%d\n", p[i]);
+    }
+}
+
+void PrintInts(const int* p, int len) {
+    KernelPrintInts<<<1, 1>>>(p, len);
+    cudaDeviceSynchronize();
+}
 
 void InitCuda() {
 #if DEVICE_MEMORY == 0
@@ -1014,6 +1036,26 @@ void Memset(bool *p, int len, bool value) {
     KernelMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(p, len, value);
 }
 
+__global__ void KernelBatchMemset(dtype **p, int count, int dim, dtype value) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < dim * count ; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        p[count_i][dim_i] = value;
+    }
+}
+
+void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
+        dtype value) {
+    int block_count = (count * dim -1 + THREAD_COUNT_PER_BLOCK) /
+        THREAD_COUNT_PER_BLOCK;
+    block_count = std::min(block_count, BLOCK_COUNT);
+    NumberPointerArray vec_arr = ToNumberPointerArray(vec);
+    KernelBatchMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(vec_arr.value,
+            count, dim, value);
+}
+
 __global__ void KernelLookupForward(const int *xids, const dtype *vocabulary,
         const dtype *drop_mask,
         dtype drop_factor,
@@ -1130,13 +1172,13 @@ __global__ void KernelMaxPoolForward(const dtype ***ins, int count,
         int dim,
         int* hit_inputs,
         dtype** outs) {
-    __shared__ volatile dtype shared_arr[THREAD_COUNT_PER_BLOCK];
-    __shared__ volatile dtype shared_indexers[THREAD_COUNT_PER_BLOCK];
+    __shared__ volatile extern dtype pool_shared_arr[];
+    volatile dtype* shared_indexers = pool_shared_arr + blockDim.x;
     int batch_i = blockIdx.y;
     int in_count = in_counts[batch_i];
     int in_count_i = threadIdx.x;
     int dim_i = blockIdx.x;
-    shared_arr[threadIdx.x] = in_count_i < in_count ?
+    pool_shared_arr[threadIdx.x] = in_count_i < in_count ?
         ins[batch_i][in_count_i][dim_i] : -INFINITY;
     shared_indexers[threadIdx.x] = threadIdx.x;
     __syncthreads();
@@ -1144,9 +1186,9 @@ __global__ void KernelMaxPoolForward(const dtype ***ins, int count,
     for (int i = (blockDim.x >> 1); i > 0;i >>=1) {
         if (threadIdx.x < i) {
             int plus_i = threadIdx.x + i;
-            if (shared_arr[threadIdx.x] < shared_arr[plus_i]) {
-                shared_arr[threadIdx.x] = shared_arr[plus_i];
-                shared_indexers[threadIdx.x] = plus_i;
+            if (pool_shared_arr[threadIdx.x] < pool_shared_arr[plus_i]) {
+                pool_shared_arr[threadIdx.x] = pool_shared_arr[plus_i];
+                shared_indexers[threadIdx.x] = shared_indexers[plus_i];
             }
         }
         __syncthreads();
@@ -1154,7 +1196,7 @@ __global__ void KernelMaxPoolForward(const dtype ***ins, int count,
 
     if (threadIdx.x == 0) {
         hit_inputs[batch_i * dim + dim_i] = shared_indexers[0];
-        outs[batch_i][dim_i] = shared_arr[0];
+        outs[batch_i][dim_i] = pool_shared_arr[0];
     }
 }
 
@@ -1174,9 +1216,8 @@ void MaxPoolForward(const std::vector<dtype**> &ins, int count,
     }
 
     dim3 block_dim(dim, count, 1);
-    KernelMaxPoolForward<<<block_dim, thread_count>>>(
-            const_cast<const dtype***>(in_arr.value),
-            count,
+    KernelMaxPoolForward<<<block_dim, thread_count, thread_count * 2 *
+        sizeof(dtype)>>>(const_cast<const dtype***>(in_arr.value), count,
             in_count_arr.value,
             dim,
             hit_inputs,

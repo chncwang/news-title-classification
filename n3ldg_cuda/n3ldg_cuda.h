@@ -101,6 +101,7 @@ struct BoolArray {
     }
     void init(bool *host_arr, int len);
     void copyFromHost(bool *host_arr);
+    void copyToHost(bool *host_arr);
     ~BoolArray();
 };
 
@@ -195,7 +196,11 @@ struct Tensor1D {
     }
 
     bool verify(const char *message) {
+#if TEST_CUDA
         return Verify(v, value, dim, message);
+#else
+        return true;
+#endif
     }
 
     void copyFromHostToDevice();
@@ -334,7 +339,11 @@ struct Tensor2D {
     }
 
     bool verify(const char* message) {
+#if TEST_CUDA
         return Verify(v, value, size, message);
+#else
+        return true;
+#endif
     }
 
     void copyFromHostToDevice();
@@ -344,6 +353,10 @@ struct Tensor2D {
 void Assert(bool v);
 void Memset(dtype *p, int len, dtype value);
 void Memset(bool *p, int len, bool value);
+void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
+        dtype value);
+void PrintNums(const dtype* p, int len);
+void PrintInts(const int* p, int len);
 
 void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
         Tensor2D &aux_square,

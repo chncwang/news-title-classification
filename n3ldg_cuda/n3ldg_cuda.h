@@ -18,7 +18,9 @@ struct NumberPointerArray {
     int len = 0;
 
     NumberPointerArray() = default;
-    NumberPointerArray(NumberPointerArray&&) = default;
+    NumberPointerArray(NumberPointerArray&&) {
+        abort();
+    }
     NumberPointerArray(const NumberPointerArray &) {
         abort();
     }
@@ -31,7 +33,9 @@ struct NumberPointerPointerArray {
     int len = 0;
 
     NumberPointerPointerArray() = default;
-    NumberPointerPointerArray(NumberPointerPointerArray&&) = default;
+    NumberPointerPointerArray(NumberPointerPointerArray&&) {
+        abort();
+    }
     NumberPointerPointerArray(const NumberPointerPointerArray &) {
         abort();
     }
@@ -44,7 +48,9 @@ struct NumberArray {
     int len = 0;
 
     NumberArray() = default;
-    NumberArray(NumberArray&&) = default;
+    NumberArray(NumberArray&&) {
+        abort();
+    }
     NumberArray(const NumberArray &) = delete;
     void init(dtype *host_arr, int len);
     void init(int len);
@@ -56,7 +62,9 @@ struct IntPointerArray {
     int len = 0;
 
     IntPointerArray() = default;
-    IntPointerArray(IntPointerArray&&) = default;
+    IntPointerArray(IntPointerArray&&) {
+        abort();
+    }
     IntPointerArray(const IntPointerArray &) = delete;
     void init(int **host_arr, int len);
     ~IntPointerArray();
@@ -67,7 +75,9 @@ struct DeviceNumber {
     dtype v = 0.0f;
 
     DeviceNumber() = default;
-    DeviceNumber(DeviceNumber &&) = default;
+    DeviceNumber(DeviceNumber &&) {
+        abort();
+    }
     DeviceNumber(const DeviceNumber&) {
         abort();
     }
@@ -82,13 +92,16 @@ struct DeviceInt {
     int v = 0;
 
     DeviceInt() = default;
-    DeviceInt(DeviceInt &&) = default;
+    DeviceInt(DeviceInt &&) {
+        abort();
+    }
     DeviceInt(const DeviceInt&) {
         abort();
     }
 
     void init();
     void copyFromDeviceToHost();
+    void copyFromHostToDevice();
     ~DeviceInt();
 };
 
@@ -97,7 +110,9 @@ struct IntArray {
     int len = 0;
 
     IntArray() = default;
-    IntArray(IntArray&&) = default;
+    IntArray(IntArray&&) {
+        abort();
+    }
     IntArray(const IntArray &) {
         abort();
     }
@@ -111,7 +126,9 @@ struct BoolArray {
     int len = 0;
 
     BoolArray() = default;
-    BoolArray(BoolArray&&) = default;
+    BoolArray(BoolArray&&) {
+        abort();
+    }
     BoolArray(const BoolArray &) {
         abort();
     }
@@ -122,8 +139,8 @@ struct BoolArray {
 };
 
 bool Verify(dtype *host, dtype* device, int len, const char* message);
-
 bool Verify(bool *host, bool *device, int len, const char* message);
+bool Verify(int *host, int *device, int len, const char* message);
 
 struct Tensor1D {
     dtype *value = NULL;
@@ -132,7 +149,9 @@ struct Tensor1D {
 
     Tensor1D() = default;
     Tensor1D(const Tensor1D &);
-    Tensor1D(Tensor1D &&) = default;
+    Tensor1D(Tensor1D &&) {
+        abort();
+    }
     void init(int len);
     void initOnDevice(int len);
     ~Tensor1D();
@@ -232,7 +251,9 @@ struct Tensor2D {
 
     Tensor2D() = default;
     Tensor2D(const Tensor2D &);
-    Tensor2D(Tensor2D &&) = default;
+    Tensor2D(Tensor2D &&) {
+        abort();
+    }
     void init(int row, int col);
     void initOnDevice(int row, int col);
     ~Tensor2D();
@@ -374,17 +395,6 @@ void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
 void PrintNums(const dtype* p, int len);
 void PrintInts(const int* p, int len);
 
-void UpdateAdam(Tensor2D &val, Tensor2D &grad, Tensor2D &aux_mean,
-        Tensor2D &aux_square,
-        int &iter,
-        dtype belta1,
-        dtype belta2,
-        dtype alpha,
-        dtype reg,
-        dtype eps);
-void RescaleGrads(std::vector<dtype *> &grads, const std::vector<int> &lens,
-        dtype max_scale);
-
 void InitCuda();
 void EndCuda();
 void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
@@ -469,6 +479,18 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
         int batchsize,
         int count,
         int dim);
+dtype SquareSum(const dtype *v, int len);
+dtype SquareSum(const dtype *v, const bool *indexers, int count, int dim);
+void Rescale(dtype *v, int len, dtype scale);
+void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
+        dtype *aux_square,
+        int iter,
+        dtype belta1,
+        dtype belta2,
+        dtype alpha,
+        dtype reg,
+        dtype eps);
+
 }
 
 #endif

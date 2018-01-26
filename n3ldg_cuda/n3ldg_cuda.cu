@@ -175,6 +175,10 @@ void DeviceInt::copyFromDeviceToHost() {
     CallCuda(cudaMemcpy(&v, value, sizeof(int), cudaMemcpyDeviceToHost));
 }
 
+void DeviceInt::copyFromHostToDevice() {
+    CallCuda(cudaMemcpy(value, &v, sizeof(int), cudaMemcpyHostToDevice));
+}
+
 DeviceInt::~DeviceInt() {
     if (value != NULL) {
         CallCuda(MemoryPool::Ins().Free(value));
@@ -676,6 +680,47 @@ bool Verify(bool *host, bool *device, int len, const char* message) {
     bool success = true;
     bool *dev_success = NULL;
     CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, 8 * sizeof(bool)));
+    CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
+                cudaMemcpyHostToDevice));
+    KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
+            len, m, dev_success);
+    CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
+                cudaMemcpyDeviceToHost));
+    MemoryPool::Ins().Free(dev_success);
+    MemoryPool::Ins().Free(m);
+    cudaDeviceSynchronize();
+    cudaPrintfDisplay(stdout, true);
+    return success;
+}
+
+__global__ void KernelVerify(int *host, int *device, int len,
+        const char *message, bool *success) {
+    int index = DeviceDefaultIndex();
+    if (index < len) {
+        if (host[index] != device[index]) {
+            *success = false;
+            printf("KernelVerify %s: host:%d device:%d \n", message,
+                    host[index],
+                    device[index]);
+            KernelPrintLine("KernelVerify: host:%d device:%d", host[index],
+                    device[index]);
+        }
+    }
+}
+
+bool Verify(int *host, int *device, int len, const char* message) {
+    IntArray arr;
+    arr.init(host, len);
+    int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
+        THREAD_COUNT_PER_BLOCK;
+    char *m = NULL;
+    CallCuda(MemoryPool::Ins().Malloc((void**)&m,
+                (strlen(message) + 1) * sizeof(char)));
+    CallCuda(cudaMemcpy(m, message,
+                (strlen(message) + 1) * sizeof(char), cudaMemcpyHostToDevice));
+    bool success = true;
+    bool *dev_success = NULL;
+    CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, sizeof(bool)));
     CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
                 cudaMemcpyHostToDevice));
     KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
@@ -1365,25 +1410,28 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
             dim);
 }
 
-__global__ void KernelSquareSum(dtype *v, int len, dtype *global_sum,
+__global__ void KernelSquareSum(const dtype *v, int len, dtype *global_sum,
         int *block_counter, dtype *result) {
     __shared__ volatile dtype shared_sum[THREAD_COUNT_PER_BLOCK];
+    __shared__ volatile bool is_last_block;
     int index = DeviceDefaultIndex();
     if (index == 0) {
         *block_counter = 0;
     }
     if (threadIdx.x == 0) {
         global_sum[blockIdx.x] = 0.0f;
+        is_last_block = false;
     }
     if (index < len) {
         shared_sum[threadIdx.x] = v[index] * v[index];
     } else {
         shared_sum[threadIdx.x] = 0.0f;
     }
-    bool is_last_block = false;
     __syncthreads();
     for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
-        shared_sum[threadIdx.x] += shared_sum[threadIdx.x + i];
+        if (threadIdx.x < i) {
+            shared_sum[threadIdx.x] += shared_sum[threadIdx.x + i];
+        }
         __syncthreads();
     }
 
@@ -1417,7 +1465,7 @@ __global__ void KernelSquareSum(dtype *v, int len, dtype *global_sum,
     }
 }
 
-dtype SquareSum(dtype *v, int len) {
+dtype SquareSum(const dtype *v, int len) {
     int block_count = DefaultBlockCountWithoutLimit(len);
     NumberArray global_sum;
     global_sum.init(block_count);
@@ -1427,6 +1475,145 @@ dtype SquareSum(dtype *v, int len) {
     result.init();
     KernelSquareSum<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, len,
             global_sum.value, block_counter.value, result.value);
+    result.copyFromDeviceToHost();
+    return result.v;
+}
+
+__global__ void KernelSquareSum(const dtype *v, const bool *indexers,
+        int count,
+        int dim,
+        dtype *global_sum,
+        int *block_counter,
+        dtype *result) {
+    __shared__ volatile dtype shared_sum[THREAD_COUNT_PER_BLOCK];
+    __shared__ volatile bool is_last_block;
+    int index = DeviceDefaultIndex();
+    if (index == 0) {
+        *block_counter = 0;
+    }
+    if (threadIdx.x == 0) {
+        global_sum[blockIdx.x] = 0.0f;
+        is_last_block = false;
+    }
+    int count_i = index / dim;
+    if (index < count * dim && indexers[count_i]) {
+        shared_sum[threadIdx.x] = v[index] * v[index];
+    } else {
+        shared_sum[threadIdx.x] = 0.0f;
+    }
+    __syncthreads();
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        if (threadIdx.x < i) {
+            shared_sum[threadIdx.x] += shared_sum[threadIdx.x + i];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        global_sum[blockIdx.x] = shared_sum[0];
+        if (atomicAdd(block_counter, 1) == gridDim.x - 1) {
+            is_last_block = true;
+        }
+    }
+    __syncthreads();
+
+    if (is_last_block) {
+        float sum = 0.0f;
+        for (int i = threadIdx.x; i < gridDim.x; i += blockDim.x) {
+            sum += global_sum[i];
+        }
+
+        shared_sum[threadIdx.x] = sum;
+        __syncthreads();
+
+        for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+            if (threadIdx.x < i) {
+                shared_sum[threadIdx.x] += shared_sum[threadIdx.x + i];
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0) {
+            *result = shared_sum[0];
+        }
+    }
+}
+
+dtype SquareSum(const dtype *v, const bool *indexers, int count, int dim) {
+    int block_count = DefaultBlockCountWithoutLimit(count * dim);
+    NumberArray global_sum;
+    global_sum.init(block_count);
+    DeviceInt block_counter;
+    block_counter.init();
+    DeviceNumber result;
+    result.init();
+    KernelSquareSum<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, indexers,
+            count, dim, global_sum.value, block_counter.value, result.value);
+    result.copyFromDeviceToHost();
+    return result.v;
+}
+
+__global__ void KernelRescale(dtype *v, int len, dtype scale) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < len; i += step) {
+        v[i] *= scale;
+    }
+}
+
+void Rescale(dtype *v, int len, dtype scale) {
+    int block_count = DefaultBlockCount(len);
+    KernelRescale<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, len, scale);
+}
+
+__global__ void KernelUpdateAdam(dtype *val, dtype *grad, int row, int col,
+        dtype *aux_mean,
+        dtype *aux_square,
+        int iter,
+        dtype belta1,
+        dtype belta2,
+        dtype alpha,
+        dtype reg,
+        dtype eps,
+        dtype x) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    int len = row * col;
+    for (int i = index; i < len; i += step) {
+        if (row > 1 && col > 1) {
+            grad[i] += val[i] * reg;
+        }
+        aux_mean[i] = belta1 * aux_mean[i] + (1 - belta1) * grad[i];
+        aux_square[i] = belta2 * aux_square[i] + (1 - belta2) * grad[i] *
+            grad[i];
+        dtype lr_t = alpha * cuda_sqrt(1 - cuda_pow(belta2, iter + 1)) * x;
+        dtype square_plus_eps = aux_square[i] + eps;
+        val[i] = val[i] - aux_mean[i] * lr_t / (square_plus_eps *
+                square_plus_eps);
+    }
+}
+
+void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
+        dtype *aux_square,
+        int iter,
+        dtype belta1,
+        dtype belta2,
+        dtype alpha,
+        dtype reg,
+        dtype eps) {
+    int block_count = DefaultBlockCount(row * col);
+    dtype x = 1.0f / (1 - pow(belta1, iter + 1));
+    KernelUpdateAdam<<<block_count, THREAD_COUNT_PER_BLOCK>>>(val, grad, row,
+            col,
+            aux_mean,
+            aux_square,
+            iter,
+            belta1,
+            belta2,
+            alpha,
+            reg,
+            eps,
+            x);
 }
 
 }

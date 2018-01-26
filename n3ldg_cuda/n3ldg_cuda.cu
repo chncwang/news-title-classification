@@ -144,15 +144,19 @@ NumberPointerPointerArray::~NumberPointerPointerArray() {
     }
 }
 
-void NumberArray::init(dtype *host_arr, int len) {
+void NumberArray::init(int len) {
     if (value != NULL) {
         CallCuda(MemoryPool::Ins().Free(value));
         value = NULL;
     }
     CallCuda(MemoryPool::Ins().Malloc((void**)&value, len * sizeof(dtype)));
+    this->len = len;
+}
+
+void NumberArray::init(dtype *host_arr, int len) {
+    init(len);
     CallCuda(cudaMemcpy(value, host_arr, len * sizeof(dtype),
                 cudaMemcpyHostToDevice));
-    this->len = len;
 }
 
 NumberArray::~NumberArray() {
@@ -172,6 +176,24 @@ void DeviceInt::copyFromDeviceToHost() {
 }
 
 DeviceInt::~DeviceInt() {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
+}
+
+void DeviceNumber::init() {
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(MemoryPool::Ins().Malloc((void**)&value, sizeof(int)));
+}
+
+void DeviceNumber::copyFromDeviceToHost() {
+    CallCuda(cudaMemcpy(&v, value, sizeof(dtype), cudaMemcpyDeviceToHost));
+}
+
+DeviceNumber::~DeviceNumber() {
     if (value != NULL) {
         CallCuda(MemoryPool::Ins().Free(value));
     }
@@ -357,6 +379,16 @@ __device__ int DeviceDefaultStep() {
 
 __device__ dtype DeviceAbs(dtype d) {
     return d > 0 ? d : -d;
+}
+
+int DefaultBlockCount(int len) {
+    int block_count = (len - 1 + THREAD_COUNT_PER_BLOCK) /
+        THREAD_COUNT_PER_BLOCK;
+    return std::min(block_count, BLOCK_COUNT);
+}
+
+int DefaultBlockCountWithoutLimit(int len) {
+    return (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK;
 }
 
 __global__ void KernelZero(dtype *v, int len) {
@@ -1268,12 +1300,10 @@ __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
                 sizeof(int32_t)) * blockDim.x);
     int dim_i = threadIdx.x;
     int count_i = blockIdx.x;
-    //printf("count_i:%d\n", count_i);
     if (count_i == 0 && dim_i == 0) {
         *correct_count = 0;
     }
     shared_val[dim_i] = dim_i < dim ? vals[count_i][dim_i] : -INFINITY;
-    //printf("shared_val:%f dim_i:%d\n", shared_val[dim_i], dim_i);
     max_indexes[dim_i] = dim_i;
     __syncthreads();
 
@@ -1287,19 +1317,15 @@ __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
 
     if (threadIdx.x == 0) {
         opt_label = max_indexes[0];
-        //printf("opt_label:%d\n", opt_label);
         if (answers[count_i] == opt_label) {
             atomicAdd(correct_count, 1);
         }
     }
     __syncthreads();
 
-    //printf("opt_label:%d\n", opt_label);
     dtype max_score = vals[count_i][opt_label];
-    //printf("max_score:%f\n", max_score);
     dtype score = dim_i < dim ? cuda_exp(vals[count_i][dim_i] - max_score) :
         0.0f;
-    //printf("score:%f\n", score);
     scores[dim_i] = score;
     scores_sum[dim_i] = score;
 
@@ -1310,7 +1336,6 @@ __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
     }
 
     if (dim_i < dim) {
-        //printf("count_i:%d dim_i:%d scores_sum[0]:%f answer:%d batchsize:%d\n", count_i, dim_i, scores_sum[0], answers[count_i], batchsize);
         losses[count_i][dim_i] = (scores[dim_i] / scores_sum[0] -
                 (dim_i == answers[count_i] ? 1 : 0)) / batchsize;
     }
@@ -1338,6 +1363,70 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
             batchsize,
             count,
             dim);
+}
+
+__global__ void KernelSquareSum(dtype *v, int len, dtype *global_sum,
+        int *block_counter, dtype *result) {
+    __shared__ volatile dtype shared_sum[THREAD_COUNT_PER_BLOCK];
+    int index = DeviceDefaultIndex();
+    if (index == 0) {
+        *block_counter = 0;
+    }
+    if (threadIdx.x == 0) {
+        global_sum[blockIdx.x] = 0.0f;
+    }
+    if (index < len) {
+        shared_sum[threadIdx.x] = v[index] * v[index];
+    } else {
+        shared_sum[threadIdx.x] = 0.0f;
+    }
+    bool is_last_block = false;
+    __syncthreads();
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        shared_sum[threadIdx.x] += shared_sum[threadIdx.x + i];
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        global_sum[blockIdx.x] = shared_sum[0];
+        if (atomicAdd(block_counter, 1) == gridDim.x - 1) {
+            is_last_block = true;
+        }
+    }
+    __syncthreads();
+
+    if (is_last_block) {
+        float sum = 0.0f;
+        for (int i = threadIdx.x; i < gridDim.x; i += blockDim.x) {
+            sum += global_sum[i];
+        }
+
+        shared_sum[threadIdx.x] = sum;
+        __syncthreads();
+
+        for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+            if (threadIdx.x < i) {
+                shared_sum[threadIdx.x] += shared_sum[threadIdx.x + i];
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0) {
+            *result = shared_sum[0];
+        }
+    }
+}
+
+dtype SquareSum(dtype *v, int len) {
+    int block_count = DefaultBlockCountWithoutLimit(len);
+    NumberArray global_sum;
+    global_sum.init(block_count);
+    DeviceInt block_counter;
+    block_counter.init();
+    DeviceNumber result;
+    result.init();
+    KernelSquareSum<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, len,
+            global_sum.value, block_counter.value, result.value);
 }
 
 }

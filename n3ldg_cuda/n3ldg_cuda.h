@@ -47,6 +47,7 @@ struct NumberArray {
     NumberArray(NumberArray&&) = default;
     NumberArray(const NumberArray &) = delete;
     void init(dtype *host_arr, int len);
+    void init(int len);
     ~NumberArray();
 };
 
@@ -59,6 +60,21 @@ struct IntPointerArray {
     IntPointerArray(const IntPointerArray &) = delete;
     void init(int **host_arr, int len);
     ~IntPointerArray();
+};
+
+struct DeviceNumber {
+    dtype *value = NULL;
+    dtype v = 0.0f;
+
+    DeviceNumber() = default;
+    DeviceNumber(DeviceNumber &&) = default;
+    DeviceNumber(const DeviceNumber&) {
+        abort();
+    }
+
+    void init();
+    void copyFromDeviceToHost();
+    ~DeviceNumber();
 };
 
 struct DeviceInt {

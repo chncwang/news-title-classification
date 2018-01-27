@@ -490,6 +490,15 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
         dtype alpha,
         dtype reg,
         dtype eps);
+void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
+        dtype *aux_square,
+        const bool *indexers,
+        int *iters,
+        dtype belta1,
+        dtype belta2,
+        dtype alpha,
+        dtype reg,
+        dtype eps);
 
 }
 

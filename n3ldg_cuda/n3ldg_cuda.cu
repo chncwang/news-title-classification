@@ -45,7 +45,7 @@ using std::endl;
 #define KernelPrintLine(format, ...)
 #endif
 
-constexpr int THREAD_COUNT_PER_BLOCK = 1024;
+constexpr int TPB = 1024;
 constexpr int BLOCK_COUNT = 56;
 
 void CallCuda(cudaError_t status) {
@@ -386,13 +386,13 @@ __device__ dtype DeviceAbs(dtype d) {
 }
 
 int DefaultBlockCount(int len) {
-    int block_count = (len - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (len - 1 + TPB) /
+        TPB;
     return std::min(block_count, BLOCK_COUNT);
 }
 
 int DefaultBlockCountWithoutLimit(int len) {
-    return (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK;
+    return (len - 1 + TPB) / TPB;
 }
 
 __global__ void KernelZero(dtype *v, int len) {
@@ -404,9 +404,9 @@ __global__ void KernelZero(dtype *v, int len) {
 }
 
 void Zero(dtype *v, int len) {
-    int block_count = (len - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
-    KernelZero<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, len);
+    int block_count = (len - 1 + TPB) /
+        TPB;
+    KernelZero<<<block_count, TPB>>>(v, len);
 }
 
 __global__ void PrintPointers(void **p, int len) {
@@ -468,11 +468,10 @@ __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
 
 void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
         int len) {
-    int block_count = (len * count - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (len * count - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
     KernelCopyFromOneVectorToMultiVectors<<<
-        block_count, THREAD_COUNT_PER_BLOCK>>>(src, dest, count, len);
+        block_count, TPB>>>(src, dest, count, len);
 }
 
 __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
@@ -489,11 +488,10 @@ __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
 void CopyFromOneVectorToMultiVectors(const dtype *src,
         const std::vector<dtype*> &dest, int count, int len) {
     NumberPointerArray dest_arr = ToNumberPointerArray(dest);
-    int block_count = (len * count - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (len * count - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
-    KernelCopyFromOneVectorToMultiVectors<<<block_count,
-    THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value, count, len);
+    KernelCopyFromOneVectorToMultiVectors<<<block_count, TPB>>>(src,
+            dest_arr.value, count, len);
 }
 
 __global__ void KernelTanh(const dtype *src, dtype**dest, dtype* dest2,
@@ -541,9 +539,8 @@ void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
     }
     int count = dest.size();
     NumberPointerArray dest_arr = ToNumberPointerArray(dest);
-    int block_count = std::min((len * count - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK, BLOCK_COUNT);
-    KernelTanh<<<block_count, THREAD_COUNT_PER_BLOCK>>>(src, dest_arr.value,
+    int block_count = std::min((len * count - 1 + TPB) / TPB, BLOCK_COUNT);
+    KernelTanh<<<block_count, TPB>>>(src, dest_arr.value,
             dest2, count, len, is_being_trained, drop_factor, drop_mask);
 }
 
@@ -577,9 +574,10 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
         int x_len,
         int b_len) {
     int len = x_len + b_len;
-    int block_count = std::min((count * len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK, 56);
+    int block_count = std::min((count * len - 1 + TPB) / TPB, 56);
     NumberPointerArray xs_arr = ToNumberPointerArray(xs);
-    KernelCopyForUniNodeForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>((const dtype**)xs_arr.value,
+    KernelCopyForUniNodeForward<<<block_count, TPB>>>(
+            (const dtype**)xs_arr.value,
             (const dtype*)b, xs_dest,
             b_dest,
             count,
@@ -629,8 +627,7 @@ __global__ void KernelVerify(dtype *host, dtype *device, int len,
 bool Verify(dtype *host, dtype *device, int len, const char* message) {
     NumberArray arr;
     arr.init(host, len);
-    int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (len + TPB - 1) / TPB;
     char *m = NULL;
     CallCuda(MemoryPool::Ins().Malloc((void**)&m,
                 (strlen(message) + 1) * sizeof(char)));
@@ -641,8 +638,7 @@ bool Verify(dtype *host, dtype *device, int len, const char* message) {
     CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, 8 * sizeof(bool)));
     CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
                 cudaMemcpyHostToDevice));
-    KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
-            len, m, dev_success);
+    KernelVerify<<<block_count, TPB>>>(arr.value, device, len, m, dev_success);
     CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
                 cudaMemcpyDeviceToHost));
     MemoryPool::Ins().Free(dev_success);
@@ -670,8 +666,7 @@ __global__ void KernelVerify(bool *host, bool *device, int len,
 bool Verify(bool *host, bool *device, int len, const char* message) {
     BoolArray arr;
     arr.init(host, len);
-    int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (len + TPB - 1) / TPB;
     char *m = NULL;
     CallCuda(MemoryPool::Ins().Malloc((void**)&m,
                 (strlen(message) + 1) * sizeof(char)));
@@ -682,8 +677,7 @@ bool Verify(bool *host, bool *device, int len, const char* message) {
     CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, 8 * sizeof(bool)));
     CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
                 cudaMemcpyHostToDevice));
-    KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
-            len, m, dev_success);
+    KernelVerify<<<block_count, TPB>>>(arr.value, device, len, m, dev_success);
     CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
                 cudaMemcpyDeviceToHost));
     MemoryPool::Ins().Free(dev_success);
@@ -711,8 +705,7 @@ __global__ void KernelVerify(int *host, int *device, int len,
 bool Verify(int *host, int *device, int len, const char* message) {
     IntArray arr;
     arr.init(host, len);
-    int block_count = (len + THREAD_COUNT_PER_BLOCK - 1) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (len + TPB - 1) / TPB;
     char *m = NULL;
     CallCuda(MemoryPool::Ins().Malloc((void**)&m,
                 (strlen(message) + 1) * sizeof(char)));
@@ -723,8 +716,7 @@ bool Verify(int *host, int *device, int len, const char* message) {
     CallCuda(MemoryPool::Ins().Malloc((void**)&dev_success, sizeof(bool)));
     CallCuda(cudaMemcpy(dev_success, &success, sizeof(bool),
                 cudaMemcpyHostToDevice));
-    KernelVerify<<<block_count, THREAD_COUNT_PER_BLOCK>>>(arr.value, device,
-            len, m, dev_success);
+    KernelVerify<<<block_count, TPB>>>(arr.value, device, len, m, dev_success);
     CallCuda(cudaMemcpy(&success, dev_success, sizeof(bool),
                 cudaMemcpyDeviceToHost));
     MemoryPool::Ins().Free(dev_success);
@@ -845,11 +837,9 @@ void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
         drop_factor = 0;
     }
     NumberPointerArray ly_arr = ToNumberPointerArray(ly);
-    int block_count = std::min(BLOCK_COUNT, (count * dim +
-                THREAD_COUNT_PER_BLOCK - 1) / THREAD_COUNT_PER_BLOCK);
-    KernelCalculateLtyForUniBackward<<<block_count,
-        THREAD_COUNT_PER_BLOCK>>>(ly_arr.value, ty, y, drop_mask, drop_factor,
-                lty, count, dim);
+    int block_count = std::min(BLOCK_COUNT, (count * dim + TPB - 1) / TPB);
+    KernelCalculateLtyForUniBackward<<<block_count, TPB>>>(ly_arr.value, ty, y,
+            drop_mask, drop_factor, lty, count, dim);
 }
 
 __global__ void KernelCalculateLyForLinearBackward(const dtype *const*ly_vec,
@@ -867,10 +857,9 @@ __global__ void KernelCalculateLyForLinearBackward(const dtype *const*ly_vec,
 void CalculateLyForLinearBackward(const std::vector<dtype*> &ly_vec, dtype *ly,
         int count, int dim) {
     NumberPointerArray ly_arr = ToNumberPointerArray(ly_vec);
-    int block_count = std::min(BLOCK_COUNT, (count * dim +
-                THREAD_COUNT_PER_BLOCK - 1) / THREAD_COUNT_PER_BLOCK);
+    int block_count = std::min(BLOCK_COUNT, (count * dim + TPB - 1) / TPB);
     KernelCalculateLyForLinearBackward<<<block_count,
-        THREAD_COUNT_PER_BLOCK>>>(ly_arr.value, ly, count, dim);
+        TPB>>>(ly_arr.value, ly, count, dim);
 }
 
 __device__ int global_block_count[1000000];
@@ -883,7 +872,7 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
         int out_dim,
         int in_dim,
         dtype *block_sums) {
-    __shared__ volatile dtype shared_arr[THREAD_COUNT_PER_BLOCK];
+    __shared__ volatile dtype shared_arr[TPB];
 
     int count_i = blockIdx.y * blockDim.x + threadIdx.x;
     int dim_i = blockIdx.x;
@@ -895,7 +884,7 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
         shared_arr[threadIdx.x] = count_i < count ? lty[lty_index] : 0.0f;
         __syncthreads();
 
-        for (int i = (THREAD_COUNT_PER_BLOCK >> 1); i > 0; i>>=1) {
+        for (int i = (TPB >> 1); i > 0; i>>=1) {
             if (threadIdx.x < i) {
                 shared_arr[threadIdx.x] += shared_arr[threadIdx.x + i];
             }
@@ -924,15 +913,14 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
 void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
         const dtype *lx, dtype *b, std::vector<dtype*> &losses, int count,
         int out_dim, int in_dim) {
-    int block_y = (count - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_y = (count - 1 + TPB) / TPB;
     dim3 block_dim(out_dim + in_dim, block_y, 1);
     NumberPointerArray loss_arr;
     loss_arr.init(losses.data(), count);
     Tensor1D block_sums;
     block_sums.init(block_y * out_dim);
     KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward<<<block_dim,
-        THREAD_COUNT_PER_BLOCK>>>(lty, lx, b, loss_arr.value, count, out_dim,
+        TPB>>>(lty, lx, b, loss_arr.value, count, out_dim,
                 in_dim, block_sums.value);
     //cudaPrintfDisplay(stdout, true);
 }
@@ -953,8 +941,7 @@ curandState_t *GetCurandStates() {
         MemoryPool &pool = MemoryPool::Ins();
         CallCuda(pool.Malloc((void**)&states, sizeof(curandState_t) *
                     MAX_BATCH_COUNT));
-        KernelInitCurandStates<<<BLOCK_COUNT, THREAD_COUNT_PER_BLOCK>>>(
-                states);
+        KernelInitCurandStates<<<BLOCK_COUNT, TPB>>>( states);
     }
     return states;
 }
@@ -1019,9 +1006,8 @@ void ConcatForward(const std::vector<dtype**> &ins, const int *in_offsets,
     NumberPointerPointerArray ins_arr = ToNumberPointerPointerArray(ins);
     NumberPointerArray out_arr = ToNumberPointerArray(outs);
     int len = count * out_dim;
-    int block_count = std::min(BLOCK_COUNT,
-            (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
-    KernelConcatForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(ins_arr.value,
+    int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
+    KernelConcatForward<<<block_count, TPB>>>(ins_arr.value,
             in_offsets, drop_mask, drop_factor, out_arr.value, count, in_count,
             out_dim);
 }
@@ -1076,10 +1062,9 @@ void ConcatBackward(const std::vector<dtype*> &out_losses,
     NumberPointerPointerArray in_loss_arr =
         ToNumberPointerPointerArray(in_losses);
     int len = count * out_dim;
-    int block_count = std::min(BLOCK_COUNT,
-            (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
     //std::cout << "len:" << len << " block_count:" << block_count << std::endl;
-    KernelConcatBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+    KernelConcatBackward<<<block_count, TPB>>>(
             const_cast<const dtype**>(out_loss_arr.value), in_offsets,
             drop_mask, drop_factor, in_loss_arr.value, count, in_count,
             out_dim);
@@ -1094,9 +1079,8 @@ __global__ void KernelMemset(dtype *p, int len, dtype value) {
 }
 
 void Memset(dtype *p, int len, dtype value) {
-    int block_count = std::min(BLOCK_COUNT,
-            (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
-    KernelMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(p, len, value);
+    int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
+    KernelMemset<<<block_count, TPB>>>(p, len, value);
 }
 
 __global__ void KernelMemset(bool *p, int len, bool value) {
@@ -1108,9 +1092,8 @@ __global__ void KernelMemset(bool *p, int len, bool value) {
 }
 
 void Memset(bool *p, int len, bool value) {
-    int block_count = std::min(BLOCK_COUNT,
-            (len - 1 + THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
-    KernelMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(p, len, value);
+    int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
+    KernelMemset<<<block_count, TPB>>>(p, len, value);
 }
 
 __global__ void KernelBatchMemset(dtype **p, int count, int dim, dtype value) {
@@ -1125,12 +1108,10 @@ __global__ void KernelBatchMemset(dtype **p, int count, int dim, dtype value) {
 
 void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
         dtype value) {
-    int block_count = (count * dim -1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (count * dim -1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
     NumberPointerArray vec_arr = ToNumberPointerArray(vec);
-    KernelBatchMemset<<<block_count, THREAD_COUNT_PER_BLOCK>>>(vec_arr.value,
-            count, dim, value);
+    KernelBatchMemset<<<block_count, TPB>>>(vec_arr.value, count, dim, value);
 }
 
 __global__ void KernelLookupForward(const int *xids, const dtype *vocabulary,
@@ -1178,13 +1159,12 @@ void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
     if (drop_factor < 0) {
         drop_factor = 0;
     }
-    int block_count = std::min(BLOCK_COUNT, (count * dim - 1 +
-                THREAD_COUNT_PER_BLOCK) / THREAD_COUNT_PER_BLOCK);
+    int block_count = std::min(BLOCK_COUNT, (count * dim - 1 + TPB) / TPB);
     Profiler &profiler = Profiler::Ins();
     IntArray xid_arr = ToIntArray(xids);
     NumberPointerArray val_arr = ToNumberPointerArray(vals);
-    KernelLookupForward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(xid_arr.value,
-            vocabulary, drop_mask, drop_factor,  count, dim,
+    KernelLookupForward<<<block_count, TPB>>>(xid_arr.value, vocabulary,
+            drop_mask, drop_factor,  count, dim,
             const_cast<dtype**>(val_arr.value));
 }
 
@@ -1227,11 +1207,10 @@ void LookupBackward(const std::vector<int> &xids, int unknown_id,
         int dim,
         dtype *grad,
         bool *indexers) {
-    int block_count = std::min((count * dim - 1 + THREAD_COUNT_PER_BLOCK) /
-            THREAD_COUNT_PER_BLOCK, BLOCK_COUNT);
+    int block_count = std::min((count * dim - 1 + TPB) / TPB, BLOCK_COUNT);
     IntArray xid_arr = ToIntArray(xids);
     NumberPointerArray loss_arr = ToNumberPointerArray(losses);
-    KernelLookupBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+    KernelLookupBackward<<<block_count, TPB>>>(
             const_cast<const int *>(xid_arr.value),
             unknown_id,
             fine_tune,
@@ -1321,10 +1300,9 @@ void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
     NumberPointerArray loss_arr = ToNumberPointerArray(losses);
     NumberPointerPointerArray in_loss_arr = ToNumberPointerPointerArray(
             in_losses);
-    int block_count = (count * dim - 1 + THREAD_COUNT_PER_BLOCK) /
-        THREAD_COUNT_PER_BLOCK;
+    int block_count = (count * dim - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
-    KernelMaxPoolBackward<<<block_count, THREAD_COUNT_PER_BLOCK>>>(
+    KernelMaxPoolBackward<<<block_count, TPB>>>(
             const_cast<const dtype**>(loss_arr.value),
             hit_inputs,
             count,
@@ -1412,7 +1390,7 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
 
 __global__ void KernelSquareSum(const dtype *v, int len, dtype *global_sum,
         int *block_counter, dtype *result) {
-    __shared__ volatile dtype shared_sum[THREAD_COUNT_PER_BLOCK];
+    __shared__ volatile dtype shared_sum[TPB];
     __shared__ volatile bool is_last_block;
     int index = DeviceDefaultIndex();
     if (index == 0) {
@@ -1473,7 +1451,7 @@ dtype SquareSum(const dtype *v, int len) {
     block_counter.init();
     DeviceNumber result;
     result.init();
-    KernelSquareSum<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, len,
+    KernelSquareSum<<<block_count, TPB>>>(v, len,
             global_sum.value, block_counter.value, result.value);
     result.copyFromDeviceToHost();
     return result.v;
@@ -1485,7 +1463,7 @@ __global__ void KernelSquareSum(const dtype *v, const bool *indexers,
         dtype *global_sum,
         int *block_counter,
         dtype *result) {
-    __shared__ volatile dtype shared_sum[THREAD_COUNT_PER_BLOCK];
+    __shared__ volatile dtype shared_sum[TPB];
     __shared__ volatile bool is_last_block;
     int index = DeviceDefaultIndex();
     if (index == 0) {
@@ -1547,7 +1525,7 @@ dtype SquareSum(const dtype *v, const bool *indexers, int count, int dim) {
     block_counter.init();
     DeviceNumber result;
     result.init();
-    KernelSquareSum<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, indexers,
+    KernelSquareSum<<<block_count, TPB>>>(v, indexers,
             count, dim, global_sum.value, block_counter.value, result.value);
     result.copyFromDeviceToHost();
     return result.v;
@@ -1563,7 +1541,7 @@ __global__ void KernelRescale(dtype *v, int len, dtype scale) {
 
 void Rescale(dtype *v, int len, dtype scale) {
     int block_count = DefaultBlockCount(len);
-    KernelRescale<<<block_count, THREAD_COUNT_PER_BLOCK>>>(v, len, scale);
+    KernelRescale<<<block_count, TPB>>>(v, len, scale);
 }
 
 __global__ void KernelUpdateAdam(dtype *val, dtype *grad, int row, int col,
@@ -1588,8 +1566,7 @@ __global__ void KernelUpdateAdam(dtype *val, dtype *grad, int row, int col,
             grad[i];
         dtype lr_t = alpha * cuda_sqrt(1 - cuda_pow(belta2, iter + 1)) * x;
         dtype square_plus_eps = aux_square[i] + eps;
-        val[i] = val[i] - aux_mean[i] * lr_t / (square_plus_eps *
-                square_plus_eps);
+        val[i] = val[i] - aux_mean[i] * lr_t / cuda_sqrt(square_plus_eps);
     }
 }
 
@@ -1603,9 +1580,7 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
         dtype eps) {
     int block_count = DefaultBlockCount(row * col);
     dtype x = 1.0f / (1 - pow(belta1, iter + 1));
-    KernelUpdateAdam<<<block_count, THREAD_COUNT_PER_BLOCK>>>(val, grad, row,
-            col,
-            aux_mean,
+    KernelUpdateAdam<<<block_count, TPB>>>(val, grad, row, col, aux_mean,
             aux_square,
             iter,
             belta1,
@@ -1614,6 +1589,64 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
             reg,
             eps,
             x);
+}
+
+__global__ void KernelUpdateAdam(dtype *val, dtype *grad, int row, int col,
+        dtype *aux_mean,
+        dtype *aux_square,
+        const bool *indexers,
+        int *iters,
+        dtype belta1,
+        dtype belta2,
+        dtype alpha,
+        dtype reg,
+        dtype eps) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    int len = row * col;
+    for (int i = index; i < len; i += step) {
+        int count_i = i / col;
+        if (indexers[count_i]) {
+            if (row > 1 && col > 1) {
+                grad[i] += val[i] * reg;
+            }
+            aux_mean[i] = belta1 * aux_mean[i] + (1 - belta1) * grad[i];
+            aux_square[i] = belta2 * aux_square[i] + (1 - belta2) * grad[i] *
+                grad[i];
+            dtype lr_t = alpha * cuda_sqrt(1 - cuda_pow(belta2,
+                        iters[count_i] + 1)) / (1 - cuda_pow(belta1,
+                            iters[count_i] + 1));
+            dtype square_plus_eps = aux_square[i] + eps;
+            val[i] = val[i] - aux_mean[i] * lr_t / cuda_sqrt(square_plus_eps);
+        }
+    }
+}
+
+__global__ void KernelSelfPlusIters(const bool *indexers, int *iters,
+        int count) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < count; i += step) {
+        if (indexers[i]) {
+            ++iters[i];
+        }
+    }
+}
+
+void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
+        dtype *aux_square,
+        const bool *indexers,
+        int *iters,
+        dtype belta1,
+        dtype belta2,
+        dtype alpha,
+        dtype reg,
+        dtype eps) {
+    int block_count = DefaultBlockCount(row * col);
+    KernelUpdateAdam<<<block_count, TPB>>>(val, grad, row, col, aux_mean,
+            aux_square, indexers, iters, belta1, belta2, alpha, reg, eps);
+    block_count = DefaultBlockCount(row);
+    KernelSelfPlusIters<<<block_count, TPB>>>(indexers, iters, row);
 }
 
 }

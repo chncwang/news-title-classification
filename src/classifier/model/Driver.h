@@ -1,4 +1,4 @@
-/*
+/*dIndexers.verify("SparseParam clearGrad")*
 * Driver.h
 *
 *  Created on: Mar 18, 2015
@@ -48,9 +48,9 @@ public:
         }
         _modelparams.exportModelParams(_ada);
 #if USE_GPU
-        for (BaseParam *p : _ada._params) {
-            p->copyFromDeviceToHost();
-        }
+//        for (BaseParam *p : _ada._params) {
+//            p->copyFromDeviceToHost();
+//        }
 #endif
         _modelparams.exportCheckGradParams(_checkgrad);
         _builders.resize(_hyperparams.batch);
@@ -192,21 +192,7 @@ public:
     void updateModel() {
         n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
         profiler.BeginEvent("update model");
-#if USE_GPU
-        profiler.BeginEvent("update model data transfer");
-        for (BaseParam *p : _ada._params) {
-            p->copyFromDeviceToHost();
-        }
-        profiler.EndCudaEvent();
-#endif
         _ada.updateAdam(10);
-#if USE_GPU
-        profiler.BeginEvent("update model data transfer");
-        for (BaseParam *p : _ada._params) {
-            p->copyFromHostToDevice();
-        }
-        profiler.EndCudaEvent();
-#endif
         profiler.EndCudaEvent();
     }
 

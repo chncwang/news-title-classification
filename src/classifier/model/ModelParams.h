@@ -3,12 +3,15 @@
 
 #include "HyperParams.h"
 #include "MySoftMaxLoss.h"
+#include <array>
+
+constexpr int CNN_LAYER = 1;
 
 class ModelParams{
 public:
     LookupTable words;
     Alphabet wordAlpha;
-    UniParams hidden;
+    std::array<UniParams, CNN_LAYER> hidden;
 
     UniParams olayer_linear;
     MySoftMaxLoss loss;
@@ -20,14 +23,22 @@ public:
         }
         opts.wordDim = words.nDim;
         opts.labelSize = 32;
-        hidden.initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.wordDim, true);
+        for (int i = 0; i < CNN_LAYER; ++i) {
+            if (i == 0) {
+                hidden.at(i).initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.wordDim, true);
+            } else {
+                hidden.at(i).initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.hiddenSize, true);
+            }
+        }
         olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
         return true;
     }
 
     void exportModelParams(ModelUpdate& ada){
         words.exportAdaParams(ada);
-        hidden.exportAdaParams(ada);
+        for (int i = 0; i < CNN_LAYER; ++i) {
+            hidden.at(i).exportAdaParams(ada);
+        }
         olayer_linear.exportAdaParams(ada);
     }
 

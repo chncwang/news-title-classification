@@ -6,12 +6,13 @@
 #include "MyLib.h"
 #include "Concat.h"
 #include "UniOP.h"
+#include <array>
 
 class GraphBuilder {
 public:
     std::vector<LookupNode> _input_nodes;
-    WindowBuilder _window_builder;
-    std::vector<UniNode> _uni_nodes;
+    std::array<WindowBuilder, CNN_LAYER> _window_builder;
+    std::array<std::vector<UniNode>, CNN_LAYER> _uni_nodes;
     MaxPoolNode _max_pool_node;
     LinearNode _neural_output;
 
@@ -25,8 +26,10 @@ public:
 
     void createNodes(int length_upper_bound) {
         _input_nodes.resize(length_upper_bound);
-        _window_builder.resize(length_upper_bound);
-        _uni_nodes.resize(length_upper_bound);
+        for (int i = 0; i < CNN_LAYER; ++i) {
+            _window_builder.at(i).resize(length_upper_bound);
+            _uni_nodes.at(i).resize(length_upper_bound);
+        }
     }
 
     void initial(Graph *pcg, ModelParams &model, HyperParams &opts) {
@@ -36,10 +39,12 @@ public:
             n.setParam(&model.words);
         }
 
-        _window_builder.init(opts.wordDim, opts.wordContext);
-        for (UniNode &n : _uni_nodes) {
-            n.init(opts.hiddenSize, opts.dropProb);
-            n.setParam(&model.hidden);
+        for (int i = 0; i < CNN_LAYER; ++i) {
+            _window_builder.at(i).init(i == 0? opts.wordDim : opts.hiddenSize, opts.wordContext);
+            for (UniNode &n : _uni_nodes.at(i)) {
+                n.init(opts.hiddenSize, opts.dropProb);
+                n.setParam(&model.hidden.at(i));
+            }
         }
 
         _max_pool_node.init(opts.hiddenSize, -1);
@@ -58,13 +63,21 @@ public:
         std::vector<Node*> input_node_ptrs =
             toPointers<LookupNode, Node>(_input_nodes,
                     feature.m_title_words.size());
-        _window_builder.forward(_graph, input_node_ptrs);
-        for (int i = 0; i < feature.m_title_words.size(); ++i) {
-            _uni_nodes.at(i).forward(_graph, &_window_builder._outputs.at(i));
+        for (int i = 0; i < CNN_LAYER; ++i) {
+            if (i == 0) {
+                _window_builder.at(i).forward(_graph, input_node_ptrs);
+            } else {
+                std::vector<Node*> uni_node_ptrs = toPointers<UniNode, Node>(
+                        _uni_nodes.at(i - 1), feature.m_title_words.size());
+                _window_builder.at(i).forward(_graph, uni_node_ptrs);
+            }
+            for (int j = 0; j < feature.m_title_words.size(); ++j) {
+                _uni_nodes.at(i).at(j).forward(_graph, &_window_builder.at(i)._outputs.at(j));
+            }
         }
 
         std::vector<Node*> uni_node_ptrs =
-            toPointers<UniNode, Node>(_uni_nodes,
+            toPointers<UniNode, Node>(_uni_nodes.at(CNN_LAYER - 1),
                 feature.m_title_words.size());
         _max_pool_node.forward(_graph, uni_node_ptrs);
         _neural_output.forward(_graph, &_max_pool_node);

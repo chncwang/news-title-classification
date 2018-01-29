@@ -14,6 +14,7 @@
 #include "profiler.h"
 #include "cnmem.h"
 #include <string>
+#include <cstring>
 #include <cstdint>
 
 namespace n3ldg_cuda {
@@ -119,13 +120,32 @@ void NumberPointerArray::init(dtype **host_arr, int len) {
     this->len = len;
 }
 
+NumberPointerArray::~NumberPointerArray() {
+    CallCuda(MemoryPool::Ins().Free(value));
+}
+
+void PageLockedNumberPointerArray::init(dtype **host_arr, int len) {
+    Profiler &profiler = Profiler::Ins();
+    if (value != NULL) {
+        CallCuda(PageLockedMemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(PageLockedMemoryPool::Ins().Malloc((void**)&value,
+                len * sizeof(dtype*)));
+    memcpy(value, host_arr, len * sizeof(dtype*));
+    this->len = len;
+}
+
+PageLockedNumberPointerArray::~PageLockedNumberPointerArray() {
+    if (value != NULL) {
+        CallCuda(PageLockedMemoryPool::Ins().Free(value));
+    }
+}
+
 void Memcpy(dtype *dest, dtype*src, int size, cudaMemcpyKind kind) {
     CallCuda(cudaMemcpy(dest, src, size, kind));
 }
 
-NumberPointerArray::~NumberPointerArray() {
-    CallCuda(MemoryPool::Ins().Free(value));
-}
 
 void NumberPointerPointerArray::init(dtype ***host_arr, int len) {
     if (value != NULL) {
@@ -242,6 +262,31 @@ IntArray::~IntArray() {
     CallCuda(MemoryPool::Ins().Free(value));
 }
 
+void PageLockedIntArray::init(int *host_arr, int len) {
+    if (value != NULL) {
+        CallCuda(PageLockedMemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(PageLockedMemoryPool::Ins().Malloc((void**)&value,
+                len * sizeof(int)));
+    memcpy(value, host_arr, len * sizeof(int));
+    this->len = len;
+}
+
+void PageLockedIntArray::init(int len) {
+    if (value != NULL) {
+        CallCuda(PageLockedMemoryPool::Ins().Free(value));
+        value = NULL;
+    }
+    CallCuda(PageLockedMemoryPool::Ins().Malloc((void**)&value,
+                len * sizeof(int)));
+    this->len = len;
+}
+
+PageLockedIntArray::~PageLockedIntArray() {
+    CallCuda(PageLockedMemoryPool::Ins().Free(value));
+}
+
 void BoolArray::init(bool *host_arr, int len) {
     if (value != NULL) {
         CallCuda(MemoryPool::Ins().Free(value));
@@ -341,7 +386,10 @@ void Tensor2D::copyFromDeviceToHost() {
 
 void Assert(bool v) {
 #if TEST_CUDA
-    if (!v) exit(1);
+    if (!v) {
+        abort();
+        exit(1);
+    }
 #endif
 }
 
@@ -737,7 +785,6 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
     Profiler &profiler = Profiler::Ins();
-    //profiler.BeginEvent("malloc");
     int min_size = 1000000000;
     std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
@@ -761,22 +808,8 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
         busy_blocks_.push_back(block);
     }
 
-    //profiler.EndEvent();
     return status;
 #endif
-}
-
-void MemoryPool::FreePool() {
-    if (!busy_blocks_.empty()) {
-        std::cout << "warning: busy_blocks_ not empty size:" << busy_blocks_.size() <<std::endl;
-        for (MemoryBlock &b : busy_blocks_) {
-            CallCuda(cudaFree(b.p));
-        }
-    }
-
-    for (MemoryBlock &b : free_blocks_) {
-        CallCuda(cudaFree(b.p));
-    }
 }
 
 cudaError_t MemoryPool::Free(void *p) {
@@ -797,6 +830,64 @@ cudaError_t MemoryPool::Free(void *p) {
     return cudaSuccess;
 #endif
 }
+
+cudaError_t PageLockedMemoryPool::Malloc(void **p, int size) {
+    assert(*p == NULL);
+#if DEVICE_MEMORY == 0
+    CallCnmem(cnmemMalloc(p, size, NULL));
+    return cudaSuccess;
+#elif DEVICE_MEMORY == 1
+    return cudaHostAlloc(p, len * sizeof(dtype*), cudaHostAllocPortable);
+#else
+    //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
+    //    busy_blocks_.size() << std::endl;
+    Profiler &profiler = Profiler::Ins();
+    int min_size = 1000000000;
+    std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
+    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
+        if (size <= it->size && min_size > it->size) {
+            min_size = it->size;
+            min_it = it;
+        }
+    }
+
+    cudaError_t status = cudaSuccess;
+    if (min_it != free_blocks_.end()) {
+        //std::cout << "cache hit" << std::endl;
+        busy_blocks_.push_back(*min_it);
+        *p = min_it->p;
+        free_blocks_.erase(min_it);
+    } else {
+        //std::cout << "no block, malloc" << std::endl;
+        status = cudaHostAlloc(p, size, cudaHostAllocPortable);
+        CallCuda(status);
+        MemoryBlock block(*p, size);
+        busy_blocks_.push_back(block);
+    }
+
+    return status;
+#endif
+}
+
+cudaError_t PageLockedMemoryPool::Free(void *p) {
+#if DEVICE_MEMORY == 0
+    CallCnmem(cnmemFree(p, NULL));
+#elif DEVICE_MEMORY == 1
+    return cudaFree(p);
+#else
+    for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1;
+            --it) {
+        if (p == it->p) {
+            free_blocks_.push_back(*it);
+            busy_blocks_.erase(it);
+            break;
+        }
+    }
+
+    return cudaSuccess;
+#endif
+}
+
 
 void Profiler::EndCudaEvent() {
     cudaDeviceSynchronize();

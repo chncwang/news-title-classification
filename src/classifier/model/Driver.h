@@ -66,37 +66,39 @@ public:
 
 #if USE_GPU
     void clearValueOnDevice() {
-        std::vector<Node*> inputs, concats, buckets, unis, max_pools, linears;
-        for (GraphBuilder &bu : _builders) {
-            std::vector<Node*> inputs_t =
-                toPointers<LookupNode, Node>(bu._input_nodes);
-            for (Node *p : inputs_t) {
-                inputs.push_back(p);
-            }
+//        std::vector<Node*> inputs, concats, buckets, unis, max_pools, linears;
+//        for (GraphBuilder &bu : _builders) {
+//            std::vector<Node*> inputs_t =
+//                toPointers<LookupNode, Node>(bu._input_nodes);
+//            for (Node *p : inputs_t) {
+//                inputs.push_back(p);
+//            }
 
-            std::vector<Node *> concat_t = toPointers<ConcatNode,
-                Node>(bu._window_builder._outputs);
-            for (Node *p : concat_t) {
-                concats.push_back(p);
-            }
+//            std::vector<Node *> concat_t = toPointers<ConcatNode,
+//                Node>(bu._window_builder._outputs);
+//            for (Node *p : concat_t) {
+//                concats.push_back(p);
+//            }
 
-            buckets.push_back(&bu._window_builder._bucket);
+//            buckets.push_back(&bu._window_builder._bucket);
 
-            std::vector<Node *> unis_t = toPointers<UniNode,
-                Node>(bu._uni_nodes);
-            for (Node *p: unis_t) {
-                unis.push_back(p);
-            }
+//            for (const std::vector<UniNode> &unis : bu._uni_nodes) {
+//                std::vector<Node *> unis_t = toPointers<UniNode,
+//                    Node>(unis);
+//                for (Node *p: unis_t) {
+//                    unis.push_back(p);
+//                }
+//            }
 
-            max_pools.push_back(&bu._max_pool_node);
-            linears.push_back(&bu._neural_output);
-        }
-        clearNodes(inputs, _hyperparams.wordDim);
-        clearNodes(max_pools, _hyperparams.hiddenSize);
-        clearNodes(concats, (1 + 2 * _hyperparams.wordContext) *
-                _hyperparams.wordDim);
-        clearNodes(buckets, _hyperparams.wordDim);
-        clearNodes(unis, _hyperparams.hiddenSize);
+//            max_pools.push_back(&bu._max_pool_node);
+//            linears.push_back(&bu._neural_output);
+//        }
+//        clearNodes(inputs, _hyperparams.wordDim);
+//        clearNodes(max_pools, _hyperparams.hiddenSize);
+//        clearNodes(concats, (1 + 2 * _hyperparams.wordContext) *
+//                _hyperparams.wordDim);
+//        clearNodes(buckets, _hyperparams.wordDim);
+//        clearNodes(unis, _hyperparams.hiddenSize);
     }
 #endif
 
@@ -105,7 +107,6 @@ public:
         profiler.BeginEvent("train");
         resetEval();
         _cg.clearValue();
-        clearValueOnDevice();
         int example_num = examples.size();
         if (example_num > _builders.size()) {
             std::cout << "Driver train - input example number larger than predefined batch number example_num:" << example_num
@@ -115,6 +116,7 @@ public:
 
         dtype cost = 0.0;
 
+        profiler.BeginEvent("build graph");
         for (int count = 0; count < example_num; count++) {
             const Example &example = examples[count];
 
@@ -122,6 +124,7 @@ public:
             _builders[count].forward(example.m_feature, true);
 
         }
+        profiler.EndEvent();
         _cg.compute();
 #if USE_GPU
         std::vector<Node*> outputs;
@@ -137,7 +140,11 @@ public:
         correct_count.init();
         profiler.BeginEvent("softmax");
         _modelparams.loss.loss(outputs, answers, correct_count, example_num);
+#if USE_GPU
         profiler.EndCudaEvent();
+#else
+        profiler.EndEvent();
+#endif
         correct_count.copyFromDeviceToHost();
 #if TEST_CUDA
         int previous_correct_count = _metric.correct_label_count;
@@ -163,7 +170,11 @@ public:
         }
 #endif
         _cg.backward();
+#if USE_GPU
         profiler.EndCudaEvent();
+#else
+        profiler.EndEvent();
+#endif
         return cost;
     }
 
@@ -193,7 +204,11 @@ public:
         n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
         profiler.BeginEvent("update model");
         _ada.updateAdam(10);
+#if USE_GPU
         profiler.EndCudaEvent();
+#else
+        profiler.EndEvent();
+#endif
     }
 
     void checkgrad(const vector<Example> &examples, int iter) {

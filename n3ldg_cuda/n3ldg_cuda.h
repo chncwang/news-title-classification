@@ -28,6 +28,21 @@ struct NumberPointerArray {
     ~NumberPointerArray();
 };
 
+struct PageLockedNumberPointerArray {
+    dtype **value = NULL;
+    int len = 0;
+
+    PageLockedNumberPointerArray() = default;
+    PageLockedNumberPointerArray(PageLockedNumberPointerArray&&) {
+        abort();
+    }
+    PageLockedNumberPointerArray(const PageLockedNumberPointerArray &) {
+        abort();
+    }
+    void init(dtype **host_arr, int len);
+    ~PageLockedNumberPointerArray();
+};
+
 struct NumberPointerPointerArray {
     dtype ***value = NULL;
     int len = 0;
@@ -119,6 +134,22 @@ struct IntArray {
     void init(int *host_arr, int len);
     void init(int len);
     ~IntArray();
+};
+
+struct PageLockedIntArray {
+    int *value = NULL;
+    int len = 0;
+
+    PageLockedIntArray() = default;
+    PageLockedIntArray(PageLockedIntArray&&) {
+        abort();
+    }
+    PageLockedIntArray(const PageLockedIntArray &) {
+        abort();
+    }
+    void init(int *host_arr, int len);
+    void init(int len);
+    ~PageLockedIntArray();
 };
 
 struct BoolArray {

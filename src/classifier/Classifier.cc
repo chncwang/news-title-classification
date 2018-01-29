@@ -157,7 +157,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
     static vector<Example> subExamples;
     int devNum = devExamples.size(), testNum = testExamples.size();
     int non_exceeds_time = 0;
-    for (int iter = 0; iter < 1; ++iter) {
+    for (int iter = 0; iter < 10; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
         for (int i = 0; i < trainExamples.size(); ++i) {

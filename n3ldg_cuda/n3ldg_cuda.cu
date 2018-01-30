@@ -16,6 +16,8 @@
 #include <string>
 #include <cstring>
 #include <cstdint>
+#include <chrono>
+#include <thread>
 
 namespace n3ldg_cuda {
 
@@ -78,37 +80,6 @@ cublasHandle_t& GetCublasHandle() {
     return handle;
 }
 
-NumberPointerArray ToNumberPointerArray(const std::vector<dtype*> &vec) {
-    NumberPointerArray device_arr;
-    device_arr.init(const_cast<dtype**>(vec.data()), vec.size());
-    return device_arr;
-}
-
-NumberPointerPointerArray ToNumberPointerPointerArray(
-        const std::vector<dtype**> &vec) {
-    NumberPointerPointerArray device_arr;
-    device_arr.init(const_cast<dtype***>(vec.data()), vec.size());
-    return device_arr;
-}
-
-IntPointerArray ToIntPointerArray(const std::vector<int*> &vec) {
-    IntPointerArray device_arr;
-    device_arr.init(const_cast<int**>(vec.data()), vec.size());
-    return device_arr;
-}
-
-IntArray ToIntArray(const std::vector<int> &vec) {
-    IntArray device_arr;
-    device_arr.init(const_cast<int*>(vec.data()), vec.size());
-    return device_arr;
-}
-
-BoolArray ToBoolArray(const bool *vec, int len) {
-    BoolArray device_arr;
-    device_arr.init(const_cast<bool*>(vec), len);
-    return device_arr;
-}
-
 void NumberPointerArray::init(dtype **host_arr, int len) {
     if (value != NULL) {
         CallCuda(MemoryPool::Ins().Free(value));
@@ -140,6 +111,12 @@ PageLockedNumberPointerArray::~PageLockedNumberPointerArray() {
     if (value != NULL) {
         CallCuda(PageLockedMemoryPool::Ins().Free(value));
     }
+}
+
+dtype **PageLockedNumberPointerArray::GetDevicePointer() const {
+    dtype **device_p;
+    CallCuda(cudaHostGetDevicePointer((void**)&device_p, (void*)value, 0));
+    return device_p;
 }
 
 void Memcpy(dtype *dest, dtype*src, int size, cudaMemcpyKind kind) {
@@ -486,6 +463,8 @@ void PrintInts(const int* p, int len) {
 }
 
 void InitCuda() {
+    CallCuda(cudaSetDeviceFlags(cudaDeviceMapHost));
+
 #if DEVICE_MEMORY == 0
     cnmemDevice_t device;
     device.size = 2000000000;
@@ -535,7 +514,8 @@ __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
 
 void CopyFromOneVectorToMultiVectors(const dtype *src,
         const std::vector<dtype*> &dest, int count, int len) {
-    NumberPointerArray dest_arr = ToNumberPointerArray(dest);
+    NumberPointerArray dest_arr;
+    dest_arr.init((dtype**)dest.data(), dest.size());
     int block_count = (len * count - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
     KernelCopyFromOneVectorToMultiVectors<<<block_count, TPB>>>(src,
@@ -586,7 +566,8 @@ void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
         drop_factor = 0;
     }
     int count = dest.size();
-    NumberPointerArray dest_arr = ToNumberPointerArray(dest);
+    PageLockedNumberPointerArray dest_arr;
+    dest_arr.init((dtype**)dest.data(), dest.size());
     int block_count = std::min((len * count - 1 + TPB) / TPB, BLOCK_COUNT);
     KernelTanh<<<block_count, TPB>>>(src, dest_arr.value,
             dest2, count, len, is_being_trained, drop_factor, drop_mask);
@@ -623,14 +604,19 @@ void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
         int b_len) {
     int len = x_len + b_len;
     int block_count = std::min((count * len - 1 + TPB) / TPB, 56);
-    NumberPointerArray xs_arr = ToNumberPointerArray(xs);
+    PageLockedNumberPointerArray xs_arr;
+    xs_arr.init((dtype**)xs.data(), xs.size());
+    NumberPointerArray arr;
+    arr.init((dtype**)xs_arr.value, xs.size());
     KernelCopyForUniNodeForward<<<block_count, TPB>>>(
-            (const dtype**)xs_arr.value,
+            (const dtype**)arr.value,
             (const dtype*)b, xs_dest,
             b_dest,
             count,
             x_len,
             b_len);
+    //std::cout << "hello world!" << std::endl;
+    //std::this_thread::sleep_for(std::chrono::microseconds(1));
 }
 
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
@@ -833,12 +819,6 @@ cudaError_t MemoryPool::Free(void *p) {
 
 cudaError_t PageLockedMemoryPool::Malloc(void **p, int size) {
     assert(*p == NULL);
-#if DEVICE_MEMORY == 0
-    CallCnmem(cnmemMalloc(p, size, NULL));
-    return cudaSuccess;
-#elif DEVICE_MEMORY == 1
-    return cudaHostAlloc(p, len * sizeof(dtype*), cudaHostAllocPortable);
-#else
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
     Profiler &profiler = Profiler::Ins();
@@ -859,22 +839,19 @@ cudaError_t PageLockedMemoryPool::Malloc(void **p, int size) {
         free_blocks_.erase(min_it);
     } else {
         //std::cout << "no block, malloc" << std::endl;
-        status = cudaHostAlloc(p, size, cudaHostAllocPortable);
+        status = cudaHostAlloc(p, size, cudaHostAllocWriteCombined);
         CallCuda(status);
         MemoryBlock block(*p, size);
         busy_blocks_.push_back(block);
     }
 
     return status;
-#endif
 }
 
 cudaError_t PageLockedMemoryPool::Free(void *p) {
-#if DEVICE_MEMORY == 0
-    CallCnmem(cnmemFree(p, NULL));
-#elif DEVICE_MEMORY == 1
-    return cudaFree(p);
-#else
+//#if DEVICE_MEMORY == 1
+//    return cudaFreeHost(p);
+//#else
     for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1;
             --it) {
         if (p == it->p) {
@@ -885,12 +862,11 @@ cudaError_t PageLockedMemoryPool::Free(void *p) {
     }
 
     return cudaSuccess;
-#endif
+//#endif
 }
 
 
 void Profiler::EndCudaEvent() {
-    cudaDeviceSynchronize();
     EndEvent();
 }
 
@@ -927,7 +903,8 @@ void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
     if (drop_factor < 0) {
         drop_factor = 0;
     }
-    NumberPointerArray ly_arr = ToNumberPointerArray(ly);
+    NumberPointerArray ly_arr;
+    ly_arr.init((dtype**)ly.data(), ly.size());
     int block_count = std::min(BLOCK_COUNT, (count * dim + TPB - 1) / TPB);
     KernelCalculateLtyForUniBackward<<<block_count, TPB>>>(ly_arr.value, ty, y,
             drop_mask, drop_factor, lty, count, dim);
@@ -947,7 +924,8 @@ __global__ void KernelCalculateLyForLinearBackward(const dtype *const*ly_vec,
 
 void CalculateLyForLinearBackward(const std::vector<dtype*> &ly_vec, dtype *ly,
         int count, int dim) {
-    NumberPointerArray ly_arr = ToNumberPointerArray(ly_vec);
+    NumberPointerArray ly_arr;
+    ly_arr.init((dtype**)ly_vec.data(), ly_vec.size());
     int block_count = std::min(BLOCK_COUNT, (count * dim + TPB - 1) / TPB);
     KernelCalculateLyForLinearBackward<<<block_count,
         TPB>>>(ly_arr.value, ly, count, dim);
@@ -1094,8 +1072,11 @@ void ConcatForward(const std::vector<dtype**> &ins, const int *in_offsets,
     if (drop_factor < 0) {
         drop_factor = 0;
     }
-    NumberPointerPointerArray ins_arr = ToNumberPointerPointerArray(ins);
-    NumberPointerArray out_arr = ToNumberPointerArray(outs);
+    //NumberPointerPointerArray ins_arr = ToNumberPointerPointerArray(ins);
+    NumberPointerPointerArray ins_arr;
+    ins_arr.init((dtype***)ins.data(), ins.size());
+    NumberPointerArray out_arr;
+    out_arr.init((dtype**)outs.data(), outs.size());
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
     KernelConcatForward<<<block_count, TPB>>>(ins_arr.value,
@@ -1149,9 +1130,10 @@ void ConcatBackward(const std::vector<dtype*> &out_losses,
     if (drop_factor < 0) {
         drop_factor = 0;
     }
-    NumberPointerArray out_loss_arr = ToNumberPointerArray(out_losses);
-    NumberPointerPointerArray in_loss_arr =
-        ToNumberPointerPointerArray(in_losses);
+    NumberPointerArray out_loss_arr;
+    out_loss_arr.init((dtype**)out_losses.data(), out_losses.size());
+    NumberPointerPointerArray in_loss_arr;
+    in_loss_arr.init((dtype***)in_losses.data(), in_losses.size());
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
     //std::cout << "len:" << len << " block_count:" << block_count << std::endl;
@@ -1201,7 +1183,8 @@ void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
         dtype value) {
     int block_count = (count * dim -1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
-    NumberPointerArray vec_arr = ToNumberPointerArray(vec);
+    NumberPointerArray vec_arr;
+    vec_arr.init((dtype**)vec.data(), vec.size());
     KernelBatchMemset<<<block_count, TPB>>>(vec_arr.value, count, dim, value);
 }
 
@@ -1252,8 +1235,10 @@ void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
     }
     int block_count = std::min(BLOCK_COUNT, (count * dim - 1 + TPB) / TPB);
     Profiler &profiler = Profiler::Ins();
-    IntArray xid_arr = ToIntArray(xids);
-    NumberPointerArray val_arr = ToNumberPointerArray(vals);
+    IntArray xid_arr;
+    xid_arr.init((int*)xids.data(), xids.size());
+    NumberPointerArray val_arr;
+    val_arr.init((dtype**)vals.data(), vals.size());
     KernelLookupForward<<<block_count, TPB>>>(xid_arr.value, vocabulary,
             drop_mask, drop_factor,  count, dim,
             const_cast<dtype**>(val_arr.value));
@@ -1299,8 +1284,12 @@ void LookupBackward(const std::vector<int> &xids, int unknown_id,
         dtype *grad,
         bool *indexers) {
     int block_count = std::min((count * dim - 1 + TPB) / TPB, BLOCK_COUNT);
-    IntArray xid_arr = ToIntArray(xids);
-    NumberPointerArray loss_arr = ToNumberPointerArray(losses);
+    PageLockedIntArray pl_arr;
+    pl_arr.init((int*)xids.data(), xids.size());
+    IntArray xid_arr;
+    xid_arr.init((int*)pl_arr.value, xids.size());
+    NumberPointerArray loss_arr;
+    loss_arr.init((dtype**)losses.data(), losses.size());
     KernelLookupBackward<<<block_count, TPB>>>(
             const_cast<const int *>(xid_arr.value),
             unknown_id,
@@ -1352,9 +1341,12 @@ void MaxPoolForward(const std::vector<dtype**> &ins, int count,
         int dim,
         int *hit_inputs,
         std::vector<dtype*> &outs) {
-    IntArray in_count_arr = ToIntArray(in_counts);
-    NumberPointerPointerArray in_arr = ToNumberPointerPointerArray(ins);
-    NumberPointerArray out_arr = ToNumberPointerArray(outs);
+    IntArray in_count_arr;
+    in_count_arr.init((int*)in_counts.data(), in_counts.size());
+    NumberPointerPointerArray in_arr;
+    in_arr.init((dtype***)ins.data(), ins.size());
+    NumberPointerArray out_arr;
+    out_arr.init((dtype**)outs.data(), outs.size());
 
     int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
     int thread_count = 8;
@@ -1388,9 +1380,10 @@ void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
         int count, 
         int dim,
         std::vector<dtype**> &in_losses) {
-    NumberPointerArray loss_arr = ToNumberPointerArray(losses);
-    NumberPointerPointerArray in_loss_arr = ToNumberPointerPointerArray(
-            in_losses);
+    NumberPointerArray loss_arr;
+    loss_arr.init((dtype**)losses.data(), losses.size());
+    NumberPointerPointerArray in_loss_arr;
+    in_loss_arr.init((dtype***)in_losses.data(), in_losses.size());
     int block_count = (count * dim - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
     KernelMaxPoolBackward<<<block_count, TPB>>>(
@@ -1465,9 +1458,12 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
     while (dim > thread_count) {
         thread_count <<= 1;
     }
-    NumberPointerArray val_arr = ToNumberPointerArray(vals);
-    NumberPointerArray loss_arr = ToNumberPointerArray(losses);
-    IntArray answer_arr = ToIntArray(answers);
+    NumberPointerArray val_arr;
+    val_arr.init((dtype**)vals.data(), vals.size());
+    NumberPointerArray loss_arr;
+    loss_arr.init((dtype**)losses.data(), losses.size());
+    IntArray answer_arr;
+    answer_arr.init((int*)answers.data(), answers.size());
     KernelSoftMaxLoss<<<count, thread_count,
         (sizeof(int32_t) + 3 * sizeof(dtype)) * thread_count>>>(
             const_cast<const dtype **>(val_arr.value),

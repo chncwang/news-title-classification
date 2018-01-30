@@ -41,6 +41,8 @@ struct PageLockedNumberPointerArray {
     }
     void init(dtype **host_arr, int len);
     ~PageLockedNumberPointerArray();
+
+    dtype **GetDevicePointer() const;
 };
 
 struct NumberPointerPointerArray {
@@ -435,7 +437,6 @@ void CopyFromOneVectorToMultiVectors(const dtype *src,
 void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2,
         int len, bool is_being_trained, dtype drop_factor,
         const dtype *drop_mask);
-NumberPointerArray ToNumberPointerArray(const std::vector<dtype*> &vec);
 void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
         dtype* xs_dest,
         dtype* b_dest,
@@ -476,8 +477,6 @@ void ConcatBackward(const std::vector<dtype*> &out_losses,
         int count,
         int in_count,
         int out_dim);
-IntPointerArray ToIntPointerArray(const std::vector<int*> &vec);
-IntArray ToIntArray(const std::vector<int> &vec);
 void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
         const dtype *drop_mask,
         dtype drop_factor,

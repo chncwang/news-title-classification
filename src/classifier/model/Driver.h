@@ -64,44 +64,6 @@ public:
             _hyperparams.adaEps);
     }
 
-#if USE_GPU
-    void clearValueOnDevice() {
-//        std::vector<Node*> inputs, concats, buckets, unis, max_pools, linears;
-//        for (GraphBuilder &bu : _builders) {
-//            std::vector<Node*> inputs_t =
-//                toPointers<LookupNode, Node>(bu._input_nodes);
-//            for (Node *p : inputs_t) {
-//                inputs.push_back(p);
-//            }
-
-//            std::vector<Node *> concat_t = toPointers<ConcatNode,
-//                Node>(bu._window_builder._outputs);
-//            for (Node *p : concat_t) {
-//                concats.push_back(p);
-//            }
-
-//            buckets.push_back(&bu._window_builder._bucket);
-
-//            for (const std::vector<UniNode> &unis : bu._uni_nodes) {
-//                std::vector<Node *> unis_t = toPointers<UniNode,
-//                    Node>(unis);
-//                for (Node *p: unis_t) {
-//                    unis.push_back(p);
-//                }
-//            }
-
-//            max_pools.push_back(&bu._max_pool_node);
-//            linears.push_back(&bu._neural_output);
-//        }
-//        clearNodes(inputs, _hyperparams.wordDim);
-//        clearNodes(max_pools, _hyperparams.hiddenSize);
-//        clearNodes(concats, (1 + 2 * _hyperparams.wordContext) *
-//                _hyperparams.wordDim);
-//        clearNodes(buckets, _hyperparams.wordDim);
-//        clearNodes(unis, _hyperparams.hiddenSize);
-    }
-#endif
-
     inline dtype train(const vector<Example> &examples, int iter) {
         n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
         profiler.BeginEvent("train");

@@ -423,6 +423,8 @@ struct Tensor2D {
 void Assert(bool v);
 void Memset(dtype *p, int len, dtype value);
 void Memset(bool *p, int len, bool value);
+void *Malloc(int size);
+void *Memcpy(void *dest, void *src, int size, cudaMemcpyKind kind);
 void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
         dtype value);
 void PrintNums(const dtype* p, int len);
@@ -529,7 +531,7 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
         dtype alpha,
         dtype reg,
         dtype eps);
-
+void *GraphHostAlloc();
 }
 
 #endif

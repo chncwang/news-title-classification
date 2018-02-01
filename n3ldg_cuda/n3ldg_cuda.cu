@@ -370,12 +370,6 @@ void Assert(bool v) {
 #endif
 }
 
-void *Malloc(int size) {
-    void *p;
-    CallCuda(cudaMalloc(&p, size));
-    return p;
-}
-
 __device__ void DeviceAtomicAdd(float* address, float value) {
     float old = value;  
     float new_old;
@@ -1169,6 +1163,16 @@ void Memset(bool *p, int len, bool value) {
     KernelMemset<<<block_count, TPB>>>(p, len, value);
 }
 
+void *Malloc(int size) {
+    void *p;
+    CallCuda(cudaMalloc(&p, size));
+    return p;
+}
+
+void *Memcpy(void *dest, void *src, int size, cudaMemcpyKind kind) {
+    CallCuda(cudaMemcpy(dest, src, size, kind));
+}
+
 __global__ void KernelBatchMemset(dtype **p, int count, int dim, dtype value) {
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
@@ -1734,6 +1738,12 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
             aux_square, indexers, iters, belta1, belta2, alpha, reg, eps);
     block_count = DefaultBlockCount(row);
     KernelSelfPlusIters<<<block_count, TPB>>>(indexers, iters, row);
+}
+
+void *GraphHostAlloc() {
+    void *m;
+    CallCuda(cudaHostAlloc(&m, 10000000, cudaHostAllocWriteCombined));
+    return m;
 }
 
 }

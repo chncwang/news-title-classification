@@ -87,6 +87,7 @@ public:
 
         }
         profiler.EndEvent();
+
         _cg.compute();
 #if USE_GPU
         std::vector<Node*> outputs;

@@ -11,7 +11,6 @@
 #include "memory_pool.h"
 #include <curand.h>
 #include <curand_kernel.h>
-#include "profiler.h"
 #include "cnmem.h"
 #include <string>
 #include <cstring>
@@ -96,7 +95,6 @@ NumberPointerArray::~NumberPointerArray() {
 }
 
 void PageLockedNumberPointerArray::init(dtype **host_arr, int len) {
-    Profiler &profiler = Profiler::Ins();
     if (value != NULL) {
         CallCuda(PageLockedMemoryPool::Ins().Free(value));
         value = NULL;
@@ -473,7 +471,6 @@ void InitCuda() {
 
 void EndCuda() {
     cudaPrintfEnd();
-    Profiler::Ins().Print();
 }
 
 __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
@@ -764,7 +761,6 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
 #else
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
-    Profiler &profiler = Profiler::Ins();
     int min_size = 1000000000;
     std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
@@ -815,7 +811,6 @@ cudaError_t PageLockedMemoryPool::Malloc(void **p, int size) {
     assert(*p == NULL);
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
-    Profiler &profiler = Profiler::Ins();
     int min_size = 1000000000;
     std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
@@ -859,10 +854,6 @@ cudaError_t PageLockedMemoryPool::Free(void *p) {
 //#endif
 }
 
-
-void Profiler::EndCudaEvent() {
-    EndEvent();
-}
 
 __global__ void KernelCalculateLtyForUniBackward(const dtype *const*ly,
         const dtype *ty,
@@ -1224,7 +1215,6 @@ void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
         drop_factor = 0;
     }
     int block_count = std::min(BLOCK_COUNT, (count * dim - 1 + TPB) / TPB);
-    Profiler &profiler = Profiler::Ins();
     IntArray xid_arr;
     xid_arr.init((int*)xids.data(), xids.size());
     NumberPointerArray val_arr;

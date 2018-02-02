@@ -5,7 +5,6 @@
 #include "Metric.h"
 #include "Node.h"
 #include "Category.h"
-#include "profiler.h"
 #if USE_GPU
 #include "n3ldg_cuda.h"
 #endif
@@ -29,8 +28,6 @@ public:
     }
 #endif
     inline dtype loss(PNode x, Category answer, Metric& metric, int batchsize = 1) {
-        n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
-        profiler.BeginEvent("MySoftMaxLoss loss");
         int nDim = x->dim;
         int labelsize = 32;
         if (labelsize != nDim) {
@@ -66,7 +63,6 @@ public:
             x->loss[i] = (scores[i] / sum2 - t) / batchsize;
         }
 
-        profiler.EndEvent();
         return cost;
     }
 

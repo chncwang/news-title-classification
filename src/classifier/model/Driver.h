@@ -13,7 +13,6 @@
 #include "Category.h"
 #include "MySoftMaxLoss.h"
 #include "Targets.h"
-#include "profiler.h"
 
 //A native neural network classfier using only word embeddings
 
@@ -65,8 +64,6 @@ public:
     }
 
     inline dtype train(const vector<Example> &examples, int iter) {
-        n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
-        profiler.BeginEvent("train");
         resetEval();
         _cg.clearValue();
         int example_num = examples.size();
@@ -78,7 +75,6 @@ public:
 
         dtype cost = 0.0;
 
-        profiler.BeginEvent("build graph");
         for (int count = 0; count < example_num; count++) {
             const Example &example = examples[count];
 
@@ -86,7 +82,6 @@ public:
             _builders[count].forward(example.m_feature, true);
 
         }
-        profiler.EndEvent();
 
         _cg.compute();
 #if USE_GPU
@@ -101,13 +96,7 @@ public:
         }
         n3ldg_cuda::DeviceInt correct_count;
         correct_count.init();
-        profiler.BeginEvent("softmax");
         _modelparams.loss.loss(outputs, answers, correct_count, example_num);
-#if USE_GPU
-        profiler.EndCudaEvent();
-#else
-        profiler.EndEvent();
-#endif
         correct_count.copyFromDeviceToHost();
 #if TEST_CUDA
         int previous_correct_count = _metric.correct_label_count;
@@ -133,11 +122,6 @@ public:
         }
 #endif
         _cg.backward();
-#if USE_GPU
-        profiler.EndCudaEvent();
-#else
-        profiler.EndEvent();
-#endif
         return cost;
     }
 
@@ -164,14 +148,7 @@ public:
 
 
     void updateModel() {
-        n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
-        profiler.BeginEvent("update model");
         _ada.updateAdam(10);
-#if USE_GPU
-        profiler.EndCudaEvent();
-#else
-        profiler.EndEvent();
-#endif
     }
 
     void checkgrad(const vector<Example> &examples, int iter) {

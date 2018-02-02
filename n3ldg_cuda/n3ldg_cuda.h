@@ -424,7 +424,7 @@ void Assert(bool v);
 void Memset(dtype *p, int len, dtype value);
 void Memset(bool *p, int len, bool value);
 void *Malloc(int size);
-void *Memcpy(void *dest, void *src, int size, cudaMemcpyKind kind);
+void Memcpy(void *dest, void *src, int size, cudaMemcpyKind kind);
 void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
         dtype value);
 void PrintNums(const dtype* p, int len);
@@ -464,21 +464,10 @@ void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
         int out_dim, int in_dim);
 void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
         dtype *mask);
-void ConcatForward(const std::vector<dtype**> &ins, const int *in_offsets,
-        const dtype *drop_mask,
-        dtype drop_factor,
-        std::vector<dtype*> &outs,
-        int count,
-        int in_count,
-        int out_dim);
-void ConcatBackward(const std::vector<dtype*> &out_losses,
-        const int *in_offsets,
-        const dtype *drop_mask,
-        dtype drop_factor,
-        std::vector<dtype**> in_losses,
-        int count,
-        int in_count,
-        int out_dim);
+void ConcatForward(const void *graph, const dtype *drop_mask,
+        dtype drop_factor, int count, int in_count, int out_dim);
+void ConcatBackward(const void *graph, const dtype *drop_mask,
+        dtype drop_factor, int count, int in_count, int out_dim);
 void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
         const dtype *drop_mask,
         dtype drop_factor,

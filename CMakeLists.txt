@@ -1,7 +1,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
 PROJECT(N3LDGStanceDetector)
 
-SET(CMAKE_CXX_COMPILER c++)
+SET(CMAKE_CXX_COMPILER g++-4.9)
 
 SET(SRC_DIR src)
 
@@ -61,7 +61,7 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
     ADD_DEFINITIONS(-DN3LDG_DEBUG)
     SET( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -w -msse3 -funroll-loops  -std=c++11 -O0 -pg" )
 else()
-    SET( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -fPIC -funroll-loops -w -std=c++11 -Ofast -march=native" )
+    SET( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -fPIC -funroll-loops -w -std=c++11 -O2 -march=native" )
 endif()
 
 ADD_DEFINITIONS( -DUSE_FLOAT )

@@ -462,10 +462,10 @@ void InitCuda() {
 #if DEVICE_MEMORY == 0
     cnmemDevice_t device;
     device.size = 2000000000;
-    device.device = 1;
+    device.device = 0;
     cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
 #else
-    CallCuda(cudaSetDevice(1));
+    CallCuda(cudaSetDevice(0));
 #endif
     CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
     CallCuda(cudaPrintfInit());
@@ -1025,13 +1025,17 @@ void CalculateDropoutMask(dtype drop_factor, int count, int dim, dtype* mask) {
     CallCurand(curandGenerateUniform(gen, mask, count * dim));
 }
 
-__global__ void KernelConcatForward(dtype ***ins, const int *in_offsets,
-        const dtype *drop_mask,
+__global__ void KernelConcatForward(const void *graph, const dtype *drop_mask,
         dtype drop_factor,
-        dtype** outs,
         int count,
         int in_count,
         int out_dim) {
+    dtype **outs = (dtype**)graph;
+    int offset = 2 * count * sizeof(dtype*);
+    dtype **ins = (dtype**)((char*)graph + offset);
+    offset += 2 * count * in_count * sizeof(dtype*);
+    int32_t *in_dims = (int32_t*)((char*)graph + offset);
+
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
     for (int i = index; i < out_dim * count; i += step) {
@@ -1042,50 +1046,45 @@ __global__ void KernelConcatForward(dtype ***ins, const int *in_offsets,
         if (dropout <= drop_factor) {
             outs[count_i][out_dim_i] = 0.0f;
         } else {
+            int in_dim_sum = 0;
+            int last_in_dim_sum;
             int offset_j = 0;
             for (int j = 0; j < in_count; ++j) {
-                if (out_dim_i < in_offsets[j]) {
+                last_in_dim_sum = in_dim_sum;
+                in_dim_sum += in_dims[j];
+                offset_j = j;
+                if (out_dim_i < in_dim_sum) {
                     break;
                 }
-                offset_j = j;
-        }
-            int in_dim_i = out_dim_i - in_offsets[offset_j];
-            outs[count_i][out_dim_i] = ins[count_i][offset_j][in_dim_i];
+            }
+            int in_dim_i = out_dim_i - last_in_dim_sum;
+            dtype v = ins[count_i * in_count + offset_j][in_dim_i];
+            outs[count_i][out_dim_i] = v;
         }
     }
 }
 
-void ConcatForward(const std::vector<dtype**> &ins, const int *in_offsets,
-        const dtype *drop_mask,
-        dtype drop_factor,
-        std::vector<dtype*> &outs,
-        int count,
-        int in_count,
-        int out_dim) {
+void ConcatForward(const void *graph, const dtype *drop_mask,
+        dtype drop_factor, int count, int in_count, int out_dim) {
     assert(drop_factor < 1);
     if (drop_factor < 0) {
         drop_factor = 0;
     }
-    //NumberPointerPointerArray ins_arr = ToNumberPointerPointerArray(ins);
-    NumberPointerPointerArray ins_arr;
-    ins_arr.init((dtype***)ins.data(), ins.size());
-    NumberPointerArray out_arr;
-    out_arr.init((dtype**)outs.data(), outs.size());
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
-    KernelConcatForward<<<block_count, TPB>>>(ins_arr.value,
-            in_offsets, drop_mask, drop_factor, out_arr.value, count, in_count,
-            out_dim);
+    KernelConcatForward<<<block_count, TPB>>>(graph, drop_mask, drop_factor,
+            count, in_count, out_dim);
 }
 
-__global__ void KernelConcatBackward(const dtype** out_losses,
-        const int *in_offsets,
-        const dtype *drop_mask,
-        dtype drop_factor,
-        dtype*** in_losses,
-        int count,
-        int in_count,
-        int out_dim) {
+__global__ void KernelConcatBackward(const void* graph, const dtype *drop_mask,
+        dtype drop_factor, int count, int in_count, int out_dim) {
+    graph = (char*)graph + count * sizeof(dtype*);
+    dtype **out_losses = (dtype**)graph;
+    graph = (char*)graph + count * (1 + in_count) * sizeof(dtype*);
+    dtype ** in_losses = (dtype**)graph;
+    graph = (char*)graph + count * in_count * sizeof(dtype*);
+    int32_t *in_dims = (int*)graph;
+
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
     for (int i = index; i < out_dim * count; i += step) {
@@ -1094,47 +1093,34 @@ __global__ void KernelConcatBackward(const dtype** out_losses,
         dtype dropout = drop_factor > 0 ?
             drop_mask[out_dim_i * count + count_i] : 1;
         if (dropout > drop_factor) {
+            int in_dim_sum = 0;
+            int last_in_dim_sum;
             int offset_j = 0;
             for (int j = 0; j < in_count; ++j) {
-                if (out_dim_i < in_offsets[j]) {
+                last_in_dim_sum = in_dim_sum;
+                in_dim_sum += in_dims[j];
+                offset_j = j;
+                if (out_dim_i < in_dim_sum) {
                     break;
                 }
-                offset_j = j;
             }
-            //KernelPrintLine("offset_j:%d", offset_j);
-            int in_dim_i = out_dim_i - in_offsets[offset_j];
-            //KernelPrintLine("in_dim_i:%d out_dim_i:%d", in_dim_i, out_dim_i);
-//            in_losses[count_i][offset_j][in_dim_i] +=
-//                out_losses[count_i][out_dim_i];
-            DeviceAtomicAdd(in_losses[count_i][offset_j] + in_dim_i,
-                    out_losses[count_i][out_dim_i]);
+            int in_dim_i = out_dim_i - last_in_dim_sum;
+            DeviceAtomicAdd(in_losses[count_i * in_count + offset_j] +
+                    in_dim_i, out_losses[count_i][out_dim_i]);
         }
     }
 }
 
-void ConcatBackward(const std::vector<dtype*> &out_losses,
-        const int *in_offsets,
-        const dtype *drop_mask,
-        dtype drop_factor,
-        std::vector<dtype**> in_losses,
-        int count,
-        int in_count,
-        int out_dim) {
+void ConcatBackward(const void *graph, const dtype *drop_mask,
+        dtype drop_factor, int count, int in_count, int out_dim) {
     assert(drop_factor < 1);
     if (drop_factor < 0) {
         drop_factor = 0;
     }
-    NumberPointerArray out_loss_arr;
-    out_loss_arr.init((dtype**)out_losses.data(), out_losses.size());
-    NumberPointerPointerArray in_loss_arr;
-    in_loss_arr.init((dtype***)in_losses.data(), in_losses.size());
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
-    //std::cout << "len:" << len << " block_count:" << block_count << std::endl;
-    KernelConcatBackward<<<block_count, TPB>>>(
-            const_cast<const dtype**>(out_loss_arr.value), in_offsets,
-            drop_mask, drop_factor, in_loss_arr.value, count, in_count,
-            out_dim);
+    KernelConcatBackward<<<block_count, TPB>>>( graph, drop_mask, drop_factor,
+            count, in_count, out_dim);
 }
 
 __global__ void KernelMemset(dtype *p, int len, dtype value) {
@@ -1169,7 +1155,7 @@ void *Malloc(int size) {
     return p;
 }
 
-void *Memcpy(void *dest, void *src, int size, cudaMemcpyKind kind) {
+void Memcpy(void *dest, void *src, int size, cudaMemcpyKind kind) {
     CallCuda(cudaMemcpy(dest, src, size, kind));
 }
 

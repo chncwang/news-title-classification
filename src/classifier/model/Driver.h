@@ -55,8 +55,8 @@ public:
         _builders.resize(_hyperparams.batch);
 
         for (int idx = 0; idx < _hyperparams.batch; idx++) {
-            _builders[idx].createNodes(GraphBuilder::max_sentence_length);
-            _builders[idx].initial(&_cg, _modelparams, _hyperparams);
+            _builders.at(idx).createNodes(GraphBuilder::max_sentence_length);
+            _builders.at(idx).initial(&_cg, _modelparams, _hyperparams);
         }
 
         setUpdateParameters(_hyperparams.nnRegular, _hyperparams.adaAlpha,
@@ -76,10 +76,10 @@ public:
         dtype cost = 0.0;
 
         for (int count = 0; count < example_num; count++) {
-            const Example &example = examples[count];
+            const Example &example = examples.at(count);
 
             //forward
-            _builders[count].forward(example.m_feature, true);
+            _builders.at(count).forward(example.m_feature, true);
 
         }
 
@@ -90,9 +90,9 @@ public:
         std::vector<int> answers;
         answers.reserve(example_num);
         for (int count = 0; count < example_num; count++) {
-            const Example &example = examples[count];
+            const Example &example = examples.at(count);
             answers.push_back(static_cast<int>(example.m_category));
-            outputs.push_back(&_builders[count]._neural_output);
+            outputs.push_back(&_builders.at(count)._neural_output);
         }
         n3ldg_cuda::DeviceInt correct_count;
         correct_count.init();
@@ -101,14 +101,14 @@ public:
 #if TEST_CUDA
         int previous_correct_count = _metric.correct_label_count;
         for (int count = 0; count < example_num; count++) {
-            const Example &example = examples[count];
-            cost += _modelparams.loss.loss(&_builders[count]._neural_output,
+            const Example &example = examples.at(count);
+            cost += _modelparams.loss.loss(&_builders.at(count)._neural_output,
                 example.m_category, _metric, example_num);
         }
         n3ldg_cuda::Assert(correct_count.v == _metric.correct_label_count -
                 previous_correct_count);
         for (int count = 0; count < example_num; count++) {
-            n3ldg_cuda::Assert(_builders[count]._neural_output.loss.verify(
+            n3ldg_cuda::Assert(_builders.at(count)._neural_output.loss.verify(
                         "softmax"));
         }
 #endif
@@ -116,8 +116,8 @@ public:
         _metric.correct_label_count += correct_count.v;
 #else
         for (int count = 0; count < example_num; count++) {
-            const Example &example = examples[count];
-            cost += _modelparams.loss.loss(&_builders[count]._neural_output,
+            const Example &example = examples.at(count);
+            cost += _modelparams.loss.loss(&_builders.at(count)._neural_output,
                 example.m_category, _metric, example_num);
         }
 #endif
@@ -127,20 +127,20 @@ public:
 
     inline void predict(const Feature &feature, Category &result, int excluded_class) {
         _cg.clearValue();
-        _builders[0].forward(feature);
+        _builders.at(0).forward(feature);
         _cg.compute();
 
         int intResult;
-        _modelparams.loss.predict(&_builders[0]._neural_output, intResult, excluded_class );
+        _modelparams.loss.predict(&_builders.at(0)._neural_output, intResult, excluded_class );
         result = static_cast<Category>(intResult);
     }
 
     inline dtype cost(const Example &example) {
         _cg.clearValue();
-        _builders[0].forward(example.m_feature, true);
+        _builders.at(0).forward(example.m_feature, true);
         _cg.compute();
 
-        dtype cost = _modelparams.loss.cost(&_builders[0]._neural_output,
+        dtype cost = _modelparams.loss.cost(&_builders.at(0)._neural_output,
             example.m_category, 1);
 
         return cost;

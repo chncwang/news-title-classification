@@ -1719,6 +1719,9 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
 void *GraphHostAlloc() {
     void *m;
     CallCuda(cudaHostAlloc(&m, 10000000, cudaHostAllocWriteCombined));
+    if (m == NULL) {
+        abort();
+    }
     return m;
 }
 

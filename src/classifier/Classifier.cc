@@ -26,7 +26,7 @@ int Classifier::createAlphabet(const vector<Instance> &vecInsts) {
     int numInstance;
 
     for (numInstance = 0; numInstance < vecInsts.size(); numInstance++) {
-        const Instance *pInstance = &vecInsts[numInstance];
+        const Instance *pInstance = &vecInsts.at(numInstance);
 
         vector<const string *> words;
         for (const string &w : pInstance->m_title_words) {
@@ -62,7 +62,7 @@ int Classifier::addTestAlpha(const vector<Instance> &vecInsts) {
     std::cout << "Adding word Alphabet..." << endl;
     int numInstance;
     for (numInstance = 0; numInstance < vecInsts.size(); numInstance++) {
-        const Instance *pInstance = &vecInsts[numInstance];
+        const Instance *pInstance = &vecInsts.at(numInstance);
 
         vector<const string *> words;
 
@@ -99,7 +99,7 @@ void Classifier::initialExamples(const vector<Instance> &vecInsts,
         vector<Example> &vecExams) {
     int numInstance;
     for (numInstance = 0; numInstance < vecInsts.size(); numInstance++) {
-        const Instance *pInstance = &vecInsts[numInstance];
+        const Instance *pInstance = &vecInsts.at(numInstance);
         Example curExam;
         convert2Example(pInstance, curExam);
         vecExams.push_back(curExam);
@@ -177,7 +177,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
                 end_pos = indexes.size();
 
             for (int idy = start_pos; idy < end_pos; idy++) {
-                subExamples.push_back(trainExamples[indexes[idy]]);
+                subExamples.push_back(trainExamples.at(indexes[idy]));
             }
 
             int curUpdateIter = iter * batchBlock + updateIter;
@@ -210,9 +210,9 @@ void Classifier::train(const string &trainFile, const string &devFile,
         assert(devExamples.size() > 0);
         for (int idx = 0; idx < devExamples.size(); idx++) {
             int excluded_class = -1;
-            Category result = predict(devExamples[idx].m_feature, excluded_class);
+            Category result = predict(devExamples.at(idx).m_feature, excluded_class);
 
-            devInsts[idx].evaluate(result, dev_metric);
+            devInsts.at(idx).evaluate(result, dev_metric);
         }
 
         auto dev_time_end = std::chrono::high_resolution_clock::now();
@@ -232,9 +232,9 @@ void Classifier::train(const string &trainFile, const string &devFile,
         Metric test_metric;
         for (int idx = 0; idx < testExamples.size(); idx++) {
             int excluded_class = -1;
-            Category category = predict(testExamples[idx].m_feature, excluded_class);
+            Category category = predict(testExamples.at(idx).m_feature, excluded_class);
 
-            testInsts[idx].evaluate(category, test_metric);
+            testInsts.at(idx).evaluate(category, test_metric);
         }
 
         auto test_time_end = std::chrono::high_resolution_clock::now();

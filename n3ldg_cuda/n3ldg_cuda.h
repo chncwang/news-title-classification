@@ -483,11 +483,8 @@ void LookupBackward(const std::vector<int> &xids, int unknown_id,
         int dim,
         dtype *grad,
         bool *indexers);
-void MaxPoolForward(const std::vector<dtype**> &ins, int count,
-        const std::vector<int> &in_counts,
-        int dim,
-        int *hit_inputs,
-        std::vector<dtype*> &outs);
+void MaxPoolForward(const void *graph, int count,
+        const std::vector<int> &in_counts, int dim, int *hit_inputs);
 void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
         int count, 
         int dim,

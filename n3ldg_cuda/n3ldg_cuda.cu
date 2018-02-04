@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <chrono>
 #include <thread>
+#include <numeric>
 
 namespace n3ldg_cuda {
 
@@ -1016,19 +1017,16 @@ void CalculateDropoutMask(dtype drop_factor, int count, int dim, dtype* mask) {
     CallCurand(curandGenerateUniform(gen, mask, count * dim));
 }
 
-__global__ void KernelConcatForward(const void *graph, const dtype *drop_mask,
+__global__ void KernelConcatForward(dtype **ins, int64_t *in_dims,
+        dtype **outs,
+        const dtype *drop_mask,
         dtype drop_factor,
         int count,
         int in_count,
         int out_dim) {
-    dtype **outs = (dtype**)graph;
-    int offset = 2 * count * sizeof(dtype*);
-    dtype **ins = (dtype**)((char*)graph + offset);
-    offset += 2 * count * in_count * sizeof(dtype*);
-    int32_t *in_dims = (int32_t*)((char*)graph + offset);
-
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
+
     for (int i = index; i < out_dim * count; i += step) {
         int out_dim_i = i % out_dim;
         int count_i = i / out_dim;
@@ -1063,19 +1061,22 @@ void ConcatForward(const void *graph, const dtype *drop_mask,
     }
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
-    KernelConcatForward<<<block_count, TPB>>>(graph, drop_mask, drop_factor,
-            count, in_count, out_dim);
+    dtype **outs = (dtype**)graph;
+    int offset = 2 * count * sizeof(dtype*);
+    dtype **ins = (dtype**)((char*)graph + offset);
+    offset += 2 * count * in_count * sizeof(dtype*);
+    int64_t *in_dims = (int64_t*)((char*)graph + offset);
+    KernelConcatForward<<<block_count, TPB>>>(ins, in_dims, outs, drop_mask,
+            drop_factor, count, in_count, out_dim);
 }
 
-__global__ void KernelConcatBackward(const void* graph, const dtype *drop_mask,
-        dtype drop_factor, int count, int in_count, int out_dim) {
-    graph = (char*)graph + count * sizeof(dtype*);
-    dtype **out_losses = (dtype**)graph;
-    graph = (char*)graph + count * (1 + in_count) * sizeof(dtype*);
-    dtype ** in_losses = (dtype**)graph;
-    graph = (char*)graph + count * in_count * sizeof(dtype*);
-    int32_t *in_dims = (int*)graph;
-
+__global__ void KernelConcatBackward(dtype** in_losses, int64_t *in_dims,
+        dtype **out_losses,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        int count,
+        int in_count,
+        int out_dim) {
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
     for (int i = index; i < out_dim * count; i += step) {
@@ -1110,8 +1111,16 @@ void ConcatBackward(const void *graph, const dtype *drop_mask,
     }
     int len = count * out_dim;
     int block_count = std::min(BLOCK_COUNT, (len - 1 + TPB) / TPB);
-    KernelConcatBackward<<<block_count, TPB>>>( graph, drop_mask, drop_factor,
-            count, in_count, out_dim);
+
+    graph = (char*)graph + count * sizeof(dtype*);
+    dtype **out_losses = (dtype**)graph;
+    graph = (char*)graph + count * (1 + in_count) * sizeof(dtype*);
+    dtype ** in_losses = (dtype**)graph;
+    graph = (char*)graph + count * in_count * sizeof(dtype*);
+    int64_t *in_dims = (int64_t*)graph;
+
+    KernelConcatBackward<<<block_count, TPB>>>(in_losses, in_dims, out_losses,
+            drop_mask, drop_factor, count, in_count, out_dim);
 }
 
 __global__ void KernelMemset(dtype *p, int len, dtype value) {
@@ -1283,19 +1292,20 @@ void LookupBackward(const std::vector<int> &xids, int unknown_id,
             indexers);
 }
 
-__global__ void KernelMaxPoolForward(const dtype ***ins, int count,
-        int *in_counts,
-        int dim,
-        int* hit_inputs,
-        dtype** outs) {
+__global__ void KernelMaxPoolForward(dtype **ins, int64_t *in_counts,
+        int max_in_count, dtype **outs, int count, int dim, int* hit_inputs) {
     __shared__ volatile extern dtype pool_shared_arr[];
     volatile dtype* shared_indexers = pool_shared_arr + blockDim.x;
     int batch_i = blockIdx.y;
     int in_count = in_counts[batch_i];
     int in_count_i = threadIdx.x;
     int dim_i = blockIdx.x;
-    pool_shared_arr[threadIdx.x] = in_count_i < in_count ?
-        ins[batch_i][in_count_i][dim_i] : -INFINITY;
+    if (in_count_i < in_count) {
+        pool_shared_arr[threadIdx.x] = ins[batch_i * max_in_count +
+            in_count_i][dim_i];
+    } else {
+        pool_shared_arr[threadIdx.x] = -INFINITY;
+    }
     shared_indexers[threadIdx.x] = threadIdx.x;
     __syncthreads();
 
@@ -1316,31 +1326,23 @@ __global__ void KernelMaxPoolForward(const dtype ***ins, int count,
     }
 }
 
-void MaxPoolForward(const std::vector<dtype**> &ins, int count,
-        const std::vector<int> &in_counts,
-        int dim,
-        int *hit_inputs,
-        std::vector<dtype*> &outs) {
-    IntArray in_count_arr;
-    in_count_arr.init((int*)in_counts.data(), in_counts.size());
-    NumberPointerPointerArray in_arr;
-    in_arr.init((dtype***)ins.data(), ins.size());
-    NumberPointerArray out_arr;
-    out_arr.init((dtype**)outs.data(), outs.size());
-
+void MaxPoolForward(const void *graph, int count,
+        const std::vector<int> &in_counts, int dim, int *hit_inputs) {
     int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
     int thread_count = 8;
     while (max_in_count > thread_count) {
         thread_count <<= 1;
     }
-
     dim3 block_dim(dim, count, 1);
+
+    dtype **outs = (dtype**)graph;
+    graph = (char*)graph + 2 * count * sizeof(dtype*);
+    dtype **ins = (dtype**)graph;
+    graph = (char*)graph + 2 * count * max_in_count * sizeof(dtype*);
+    int64_t *in_counts_device = (int64_t*)graph;
     KernelMaxPoolForward<<<block_dim, thread_count, thread_count * 2 *
-        sizeof(dtype)>>>(const_cast<const dtype***>(in_arr.value), count,
-            in_count_arr.value,
-            dim,
-            hit_inputs,
-            out_arr.value);
+        sizeof(dtype)>>>(ins, in_counts_device, max_in_count, outs, count,
+            dim, hit_inputs);
 }
 
 __global__ void KernelMaxPoolBackward(const dtype ** losses,
@@ -1379,12 +1381,12 @@ __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
     volatile __shared__ int opt_label;
     volatile extern __shared__ char shared_arr[];
     volatile dtype * shared_val = (dtype*)(shared_arr);
-    volatile int32_t *max_indexes =
-        (int32_t*)(shared_arr + sizeof(dtype) * blockDim.x);
+    volatile int64_t *max_indexes =
+        (int64_t*)(shared_arr + sizeof(dtype) * blockDim.x);
     volatile dtype * scores = (dtype*)(shared_arr + (sizeof(dtype) +
-                sizeof(int32_t)) * blockDim.x);
+                sizeof(int64_t)) * blockDim.x);
     volatile dtype * scores_sum = (dtype*)(shared_arr + (2 * sizeof(dtype) +
-                sizeof(int32_t)) * blockDim.x);
+                sizeof(int64_t)) * blockDim.x);
     int dim_i = threadIdx.x;
     int count_i = blockIdx.x;
     if (count_i == 0 && dim_i == 0) {
@@ -1445,7 +1447,7 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
     IntArray answer_arr;
     answer_arr.init((int*)answers.data(), answers.size());
     KernelSoftMaxLoss<<<count, thread_count,
-        (sizeof(int32_t) + 3 * sizeof(dtype)) * thread_count>>>(
+        (sizeof(int64_t) + 3 * sizeof(dtype)) * thread_count>>>(
             const_cast<const dtype **>(val_arr.value),
             const_cast<dtype **>(loss_arr.value),
             correct_count,

@@ -157,6 +157,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
     static vector<Example> subExamples;
     int devNum = devExamples.size(), testNum = testExamples.size();
     int non_exceeds_time = 0;
+    auto time_start = std::chrono::high_resolution_clock::now();
     for (int iter = 0; iter < 1; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
@@ -168,7 +169,6 @@ void Classifier::train(const string &trainFile, const string &devFile,
         if (indexes.size() % m_options.batchSize != 0)
             batchBlock++;
         Metric metric;
-        auto time_start = std::chrono::high_resolution_clock::now();
         for (int updateIter = 0; updateIter < batchBlock; updateIter++) {
             subExamples.clear();
             int start_pos = updateIter * m_options.batchSize;
@@ -312,7 +312,5 @@ int main(int argc, char *argv[]) {
     }
 #if USE_GPU
     n3ldg_cuda::EndCuda();
-#else
-    n3ldg_cuda::Profiler::Ins().Print();
 #endif
 }

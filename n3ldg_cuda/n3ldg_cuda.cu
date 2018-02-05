@@ -461,10 +461,10 @@ void InitCuda() {
 #if DEVICE_MEMORY == 0
     cnmemDevice_t device;
     device.size = 2000000000;
-    device.device = 0;
+    device.device = 1;
     cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
 #else
-    CallCuda(cudaSetDevice(0));
+    CallCuda(cudaSetDevice(1));
 #endif
     CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
     CallCuda(cudaPrintfInit());
@@ -472,25 +472,6 @@ void InitCuda() {
 
 void EndCuda() {
     cudaPrintfEnd();
-}
-
-__global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
-        dtype *dest, int count, int len) {
-    int index = DeviceDefaultIndex();
-    int step = DeviceDefaultStep();
-    for (int i = index; i < len * count; i += step) {
-        int count_i = i / len;
-        int len_i = i % len;
-        dest[count_i * len + len_i] = src[len_i];
-    }
-}
-
-void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
-        int len) {
-    int block_count = (len * count - 1 + TPB) / TPB;
-    block_count = std::min(block_count, BLOCK_COUNT);
-    KernelCopyFromOneVectorToMultiVectors<<<
-        block_count, TPB>>>(src, dest, count, len);
 }
 
 __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
@@ -504,14 +485,13 @@ __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
     }
 }
 
-void CopyFromOneVectorToMultiVectors(const dtype *src,
-        const std::vector<dtype*> &dest, int count, int len) {
-    NumberPointerArray dest_arr;
-    dest_arr.init((dtype**)dest.data(), dest.size());
+void CopyFromOneVectorToMultiVals(const void *graph, const dtype *src,
+        int count, int len) {
+    dtype **vals = (dtype**)graph;
     int block_count = (len * count - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
-    KernelCopyFromOneVectorToMultiVectors<<<block_count, TPB>>>(src,
-            dest_arr.value, count, len);
+    KernelCopyFromOneVectorToMultiVectors<<<block_count, TPB>>>(src, vals,
+            count, len);
 }
 
 __global__ void KernelTanh(const dtype *src, dtype**dest, dtype* dest2,
@@ -588,27 +568,17 @@ __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
     }
 }
 
-void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
+void CopyForUniNodeForward(const void *graph, const dtype* b,
         dtype* xs_dest,
         dtype* b_dest,
         int count,
         int x_len,
         int b_len) {
+    dtype **xs = (dtype**)((char*)graph + 2 * count * sizeof(dtype*));
     int len = x_len + b_len;
     int block_count = std::min((count * len - 1 + TPB) / TPB, 56);
-    PageLockedNumberPointerArray xs_arr;
-    xs_arr.init((dtype**)xs.data(), xs.size());
-    NumberPointerArray arr;
-    arr.init((dtype**)xs_arr.value, xs.size());
-    KernelCopyForUniNodeForward<<<block_count, TPB>>>(
-            (const dtype**)arr.value,
-            (const dtype*)b, xs_dest,
-            b_dest,
-            count,
-            x_len,
-            b_len);
-    //std::cout << "hello world!" << std::endl;
-    //std::this_thread::sleep_for(std::chrono::microseconds(1));
+    KernelCopyForUniNodeForward<<<block_count, TPB>>>((const dtype**)xs,
+            (const dtype*)b, xs_dest, b_dest, count, x_len, b_len);
 }
 
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
@@ -1368,7 +1338,7 @@ void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
     graph = (char*)graph + count * sizeof(dtype*);
     dtype **losses = (dtype**)graph;
     int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
-    graph = (char*)graph + (1 + count * max_in_count) * sizeof(dtype*);
+    graph = (char*)graph + count * (1 + max_in_count) * sizeof(dtype*);
     dtype** in_losses = (dtype**)graph;
     int block_count = (count * dim - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);

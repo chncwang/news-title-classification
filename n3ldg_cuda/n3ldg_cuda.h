@@ -432,19 +432,16 @@ void PrintInts(const int* p, int len);
 
 void InitCuda();
 void EndCuda();
-void CopyFromOneVectorToMultiVectors(const dtype *src, dtype *dest, int count,
-        int len);
-void CopyFromOneVectorToMultiVectors(const dtype *src,
-        const std::vector<dtype*> &dest, int count, int len);
+
+void CopyFromOneVectorToMultiVals(const void *graph, const dtype *src,
+        int count, int len);
 void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2,
-        int len, bool is_being_trained, dtype drop_factor,
+        int len,
+        bool is_being_trained,
+        dtype drop_factor,
         const dtype *drop_mask);
-void CopyForUniNodeForward(const std::vector<dtype*> &xs, const dtype* b,
-        dtype* xs_dest,
-        dtype* b_dest,
-        int count,
-        int x_len,
-        int b_len);
+void CopyForUniNodeForward(const void *graph, const dtype* b, dtype* xs_dest,
+        dtype* b_dest, int count, int x_len, int b_len);
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
         int count,
         bool useb,

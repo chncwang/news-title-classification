@@ -1346,34 +1346,39 @@ void MaxPoolForward(const void *graph, int count,
 }
 
 __global__ void KernelMaxPoolBackward(const dtype ** losses,
-        const int *hit_inputs, int count, int dim, dtype ***in_losses) {
+        const int *hit_inputs,
+        int max_in_count,
+        int count,
+        int dim,
+        dtype **in_losses) {
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
     for (int i = index; i < dim * count; i += step) {
         int count_i = i / dim;
         int dim_i = i % dim;
         int input_i = hit_inputs[i];
-        DeviceAtomicAdd(in_losses[count_i][input_i] + dim_i,
-                losses[count_i][dim_i]);
+        dtype loss = losses[count_i][dim_i];
+        DeviceAtomicAdd(in_losses[count_i * max_in_count + input_i] + dim_i,
+                loss);
     }
 }
 
-void MaxPoolBackward(const std::vector<dtype*> &losses, const int *hit_inputs,
-        int count, 
-        int dim,
-        std::vector<dtype**> &in_losses) {
-    NumberPointerArray loss_arr;
-    loss_arr.init((dtype**)losses.data(), losses.size());
-    NumberPointerPointerArray in_loss_arr;
-    in_loss_arr.init((dtype***)in_losses.data(), in_losses.size());
+void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
+        const int *hit_inputs, int count, int dim) {
+    graph = (char*)graph + count * sizeof(dtype*);
+    dtype **losses = (dtype**)graph;
+    int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
+    graph = (char*)graph + (1 + count * max_in_count) * sizeof(dtype*);
+    dtype** in_losses = (dtype**)graph;
     int block_count = (count * dim - 1 + TPB) / TPB;
     block_count = std::min(block_count, BLOCK_COUNT);
     KernelMaxPoolBackward<<<block_count, TPB>>>(
-            const_cast<const dtype**>(loss_arr.value),
+            const_cast<const dtype**>(losses),
             hit_inputs,
+            max_in_count,
             count,
             dim,
-            in_loss_arr.value);
+            in_losses);
 }
 
 __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,

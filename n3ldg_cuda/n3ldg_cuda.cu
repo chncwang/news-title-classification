@@ -18,6 +18,7 @@
 #include <chrono>
 #include <thread>
 #include <numeric>
+#include "profiler.h"
 
 namespace n3ldg_cuda {
 
@@ -472,6 +473,7 @@ void InitCuda() {
 
 void EndCuda() {
     cudaPrintfEnd();
+    Profiler::Ins().Print();
 }
 
 __global__ void KernelCopyFromOneVectorToMultiVectors(const dtype *src,
@@ -825,6 +827,10 @@ cudaError_t PageLockedMemoryPool::Free(void *p) {
 //#endif
 }
 
+void Profiler::EndCudaEvent() {
+    cudaDeviceSynchronize();
+    EndEvent();
+}
 
 __global__ void KernelCalculateLtyForUniBackward(const dtype *const*ly,
         const dtype *ty,

@@ -13,6 +13,7 @@
 #include "Category.h"
 #include "MySoftMaxLoss.h"
 #include "Targets.h"
+#include "profiler.h"
 
 //A native neural network classfier using only word embeddings
 
@@ -64,6 +65,8 @@ public:
     }
 
     inline dtype train(const vector<Example> &examples, int iter) {
+        n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
+        profiler.BeginEvent("train");
         resetEval();
         _cg.clearValue();
         int example_num = examples.size();
@@ -75,6 +78,7 @@ public:
 
         dtype cost = 0.0;
 
+        profiler.BeginEvent("build graph");
         for (int count = 0; count < example_num; count++) {
             const Example &example = examples.at(count);
 
@@ -82,8 +86,11 @@ public:
             _builders.at(count).forward(example.m_feature, true);
 
         }
+        profiler.EndCudaEvent();
 
+        profiler.BeginEvent("Graph compute");
         _cg.compute();
+        profiler.EndCudaEvent();
 #if USE_GPU
         std::vector<Node*> outputs;
         outputs.reserve(example_num);
@@ -94,10 +101,12 @@ public:
             answers.push_back(static_cast<int>(example.m_category));
             outputs.push_back(&_builders.at(count)._neural_output);
         }
+        profiler.BeginEvent("softmax");
         n3ldg_cuda::DeviceInt correct_count;
         correct_count.init();
         _modelparams.loss.loss(outputs, answers, correct_count, example_num);
         correct_count.copyFromDeviceToHost();
+        profiler.EndCudaEvent();
 #if TEST_CUDA
         int previous_correct_count = _metric.correct_label_count;
         for (int count = 0; count < example_num; count++) {
@@ -121,7 +130,10 @@ public:
                 example.m_category, _metric, example_num);
         }
 #endif
+        profiler.BeginEvent("backward");
         _cg.backward();
+        profiler.EndCudaEvent();
+        profiler.EndCudaEvent();
         return cost;
     }
 

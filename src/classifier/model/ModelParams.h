@@ -5,7 +5,7 @@
 #include "MySoftMaxLoss.h"
 #include <array>
 
-constexpr int CNN_LAYER = 4;
+constexpr int CNN_LAYER = 1;
 
 class ModelParams{
 public:

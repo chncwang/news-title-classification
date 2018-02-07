@@ -312,5 +312,7 @@ int main(int argc, char *argv[]) {
     }
 #if USE_GPU
     n3ldg_cuda::EndCuda();
+#else
+    n3ldg_cuda::Profiler::Ins().Print();
 #endif
 }

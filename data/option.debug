@@ -1,4 +1,4 @@
-batchSize = 64
+batchSize = 200
 hiddenSize = 200
 wordEmbSize = 50
 dropProb = 0.5

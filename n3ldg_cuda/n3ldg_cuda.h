@@ -435,13 +435,31 @@ void EndCuda();
 
 void CopyFromOneVectorToMultiVals(const void *graph, const dtype *src,
         int count, int len);
-void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype* dest2,
+
+enum ActivatedEnum {
+    TANH,
+    SIGMOID,
+};
+void Tanh(ActivatedEnum activated, const dtype *src,
+        const std::vector<dtype*>& dest,
+        dtype* dest2,
         int len,
         bool is_being_trained,
         dtype drop_factor,
         const dtype *drop_mask);
+
 void CopyForUniNodeForward(const void *graph, const dtype* b, dtype* xs_dest,
         dtype* b_dest, int count, int x_len, int b_len);
+void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
+        const std::vector<dtype *>& x2s,
+        const dtype *b,
+        dtype *x1s_dest,
+        dtype *x2s_dest,
+        dtype *b_dest,
+        int count,
+        int x1_len,
+        int x2_len,
+        int b_len);
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
         int count,
         bool useb,
@@ -459,6 +477,16 @@ void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
 void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
         const dtype *lx, dtype *b, std::vector<dtype*> &losses, int count,
         int out_dim, int in_dim);
+void AddLtyToParamBiasAndAddLxToInputLossesForBiBackward(const dtype *lty,
+        const dtype *lx1,
+        const dtype *lx2,
+        dtype *b,
+        std::vector<dtype*> &losses1,
+        std::vector<dtype*> &losses2,
+        int count,
+        int out_dim,
+        int in_dim1,
+        int in_dim2);
 void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
         dtype *mask);
 void ConcatForward(const void *graph, const dtype *drop_mask,

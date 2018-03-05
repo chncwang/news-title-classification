@@ -379,6 +379,10 @@ __device__ void DeviceAtomicAdd(float* address, float value) {
     } while ((old = atomicExch(address, new_old))!=0.0f);
 };
 
+__device__ dtype cuda_sigmoid(dtype x) {
+    return 1 / (1 + cuda_exp(-x));
+}
+
 void Random(dtype *v, int len, dtype bound) {
     dtype *mem = (dtype*)malloc(len * sizeof(dtype));
     assert(mem != NULL);
@@ -496,7 +500,7 @@ void CopyFromOneVectorToMultiVals(const void *graph, const dtype *src,
             count, len);
 }
 
-__global__ void KernelTanh(const dtype *src, dtype**dest, dtype* dest2,
+__global__ void KernelTanh(ActivatedEnum activated, const dtype *src, dtype**dest, dtype* dest2,
         int count, int len, bool is_being_trained, dtype drop_factor,
         const dtype *drop_mask) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -507,7 +511,15 @@ __global__ void KernelTanh(const dtype *src, dtype**dest, dtype* dest2,
     for (int i = index; i < len * count; i += step) {
         int count_i = i % count;
         int len_i = i / count;
-        dtype result = cuda_tanh(src[i]);
+        dtype result;
+        if (activated == ActivatedEnum::TANH) {
+            result = cuda_tanh(src[i]);
+        } else if (activated == ActivatedEnum::SIGMOID) {
+            result = cuda_sigmoid(src[i]);
+        } else {
+            printf("KernelTanh error\n");
+            return;
+        }
         if (is_being_trained) {
             if (drop_mask[i] <= drop_factor) {
                 dest[count_i][len_i] = 0.0f;
@@ -533,7 +545,7 @@ __global__ void KernelCountDrop(dtype *y, int dim) {
     KernelPrintLine("drop count:%d", count);
 }
 
-void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
+void Tanh(ActivatedEnum activated, const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
         int len, bool is_being_trained, dtype drop_factor,
         const dtype *drop_mask) {
     if (drop_factor < 0) {
@@ -543,7 +555,7 @@ void Tanh(const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
     PageLockedNumberPointerArray dest_arr;
     dest_arr.init((dtype**)dest.data(), dest.size());
     int block_count = std::min((len * count - 1 + TPB) / TPB, BLOCK_COUNT);
-    KernelTanh<<<block_count, TPB>>>(src, dest_arr.value,
+    KernelTanh<<<block_count, TPB>>>(activated, src, dest_arr.value,
             dest2, count, len, is_being_trained, drop_factor, drop_mask);
 }
 
@@ -581,6 +593,70 @@ void CopyForUniNodeForward(const void *graph, const dtype* b,
     int block_count = std::min((count * len - 1 + TPB) / TPB, 56);
     KernelCopyForUniNodeForward<<<block_count, TPB>>>((const dtype**)xs,
             (const dtype*)b, xs_dest, b_dest, count, x_len, b_len);
+}
+
+__global__ void KernelCopyForBiNodeForward(const dtype **x1s,
+        const dtype **x2s,
+        const dtype *b,
+        dtype *x1s_dest,
+        dtype *x2s_dest,
+        dtype *b_dest,
+        int count,
+        int x1_len,
+        int x2_len,
+        int b_len) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    int x1_total_len = count * x1_len;
+    int x2_total_len = count * x2_len;
+    int b_total_len = count * b_len;
+
+    int total_len = x1_total_len + x2_total_len + b_total_len;
+
+    for (int i = index; i < total_len; i += step) {
+        if (i < x1_total_len) {
+            int len_i = i / count;
+            int count_i = i % count;
+            x1s_dest[i] = x1s[count_i][len_i];
+        } else if (i >= x1_total_len && i < x1_total_len + x2_total_len) {
+            int len_i = (i - x1_total_len) / count;
+            int count_i = (i - x1_total_len) % count;
+            x2s_dest[i - x1_total_len] = x2s[count_i][len_i];
+        } else {
+            int b_i = (i - x1_total_len - x2_total_len);
+            int len_i = b_i / count;
+            b_dest[b_i] = b[len_i];
+        }
+    }
+}
+
+
+void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
+        const std::vector<dtype *>& x2s,
+        const dtype *b,
+        dtype *x1s_dest,
+        dtype *x2s_dest,
+        dtype *b_dest,
+        int count,
+        int x1_len,
+        int x2_len,
+        int b_len) {
+    int len = x1_len + x2_len + b_len;
+    int block_count = DefaultBlockCount(count * len);
+    NumberPointerArray x1_arr, x2_arr;
+    x1_arr.init((dtype**)x1s.data(), x1s.size());
+    x2_arr.init((dtype**)x2s.data(), x2s.size());
+    KernelCopyForBiNodeForward<<<block_count, TPB>>>(
+            (const dtype**)x1_arr.value,
+            (const dtype**)x2_arr.value,
+            b,
+            x1s_dest,
+            x2s_dest,
+            b_dest,
+            count,
+            x1_len,
+            x2_len,
+            b_len);
 }
 
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
@@ -893,7 +969,6 @@ void CalculateLyForLinearBackward(const std::vector<dtype*> &ly_vec, dtype *ly,
         TPB>>>(ly_arr.value, ly, count, dim);
 }
 
-__device__ int global_block_count[1000000];
 __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
         const dtype *lty,
         const dtype *lx,
@@ -902,7 +977,8 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
         int count,
         int out_dim,
         int in_dim,
-        dtype *block_sums) {
+        dtype *block_sums,
+        int *global_block_count) {
     __shared__ volatile dtype shared_arr[TPB];
 
     int count_i = blockIdx.y * blockDim.x + threadIdx.x;
@@ -950,10 +1026,94 @@ void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
     loss_arr.init(losses.data(), count);
     Tensor1D block_sums;
     block_sums.init(block_y * out_dim);
+    IntArray global_block_count_arr;
+    global_block_count_arr.init(out_dim);
     KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward<<<block_dim,
         TPB>>>(lty, lx, b, loss_arr.value, count, out_dim,
-                in_dim, block_sums.value);
-    //cudaPrintfDisplay(stdout, true);
+                in_dim, block_sums.value, global_block_count_arr.value);
+}
+
+__global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForBiBackward(
+        const dtype *lty,
+        const dtype *lx1,
+        const dtype *lx2,
+        dtype *b,
+        dtype **losses1,
+        dtype **losses2,
+        int count,
+        int out_dim,
+        int in_dim1,
+        int in_dim2,
+        dtype *block_sums,
+        int *global_block_count) {
+    __shared__ volatile dtype shared_arr[TPB];
+
+    int count_i = blockIdx.y * blockDim.x + threadIdx.x;
+    int dim_i = blockIdx.x;
+    if (dim_i < out_dim) {
+        if (threadIdx.x == 0 && blockIdx.y == 0) {
+            global_block_count[dim_i] = 0;
+        }
+        int lty_index = dim_i * count + count_i;
+        shared_arr[threadIdx.x] = count_i < count ? lty[lty_index] : 0.0f;
+        __syncthreads();
+
+        for (int i = (TPB >> 1); i > 0; i>>=1) {
+            if (threadIdx.x < i) {
+                shared_arr[threadIdx.x] += shared_arr[threadIdx.x + i];
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0) {
+            block_sums[gridDim.y * blockIdx.x + blockIdx.y] = shared_arr[0];
+            if (atomicAdd(global_block_count + dim_i, 1) == gridDim.y - 1) {
+                dtype sum = 0.0;
+                for (int i = 0; i < gridDim.y; ++i) {
+                    sum += block_sums[gridDim.y * blockIdx.x + i];
+                }
+                DeviceAtomicAdd(b + dim_i, sum);
+            }
+        }
+    } else if (dim_i < out_dim + in_dim1) {
+        if (count_i < count) {
+            dim_i -= out_dim;
+            int lx_index = dim_i * count + count_i;
+            DeviceAtomicAdd(losses1[count_i] + dim_i, lx1[lx_index]);
+        }
+    } else {
+        if (count_i < count) {
+            dim_i -= (out_dim + in_dim1);
+            int lx_index = dim_i * count + count_i;
+            DeviceAtomicAdd(losses2[count_i] + dim_i, lx2[lx_index]);
+        }
+    }
+}
+
+void AddLtyToParamBiasAndAddLxToInputLossesForBiBackward(const dtype *lty,
+        const dtype *lx1,
+        const dtype *lx2,
+        dtype *b,
+        std::vector<dtype*> &losses1,
+        std::vector<dtype*> &losses2,
+        int count,
+        int out_dim,
+        int in_dim1,
+        int in_dim2) {
+    int block_y = (count - 1 + TPB) / TPB;
+    dim3 block_dim(out_dim + in_dim1 + in_dim2, block_y, 1);
+    NumberPointerArray loss1_arr;
+    loss1_arr.init(losses1.data(), count);
+    NumberPointerArray loss2_arr;
+    loss2_arr.init(losses2.data(), count);
+    Tensor1D block_sums;
+    block_sums.init(block_y * out_dim);
+    IntArray global_block_count_arr;
+    global_block_count_arr.init(out_dim);
+    KernelAddLtyToParamBiasAndAddLxToInputLossesForBiBackward<<<block_dim,
+        TPB>>>(lty, lx1, lx2, b, loss1_arr.value, loss2_arr.value, count,
+                out_dim, in_dim1, in_dim2, block_sums.value,
+                global_block_count_arr.value);
 }
 
 constexpr int MAX_BATCH_COUNT = 1000000;

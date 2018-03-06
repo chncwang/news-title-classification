@@ -1,4 +1,5 @@
 #include "n3ldg_cuda.h"
+
 #include <array>
 #include <cstdlib>
 #include <vector>
@@ -1515,6 +1516,38 @@ void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
             count,
             dim,
             in_losses);
+}
+
+__global__ void KernelPMultiForward(const dtype **ins1, const dtype **ins2,
+        int count, int dim, const dtype* drop_mask, dtype drop_factor,
+        dtype** vals) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < count * dim; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        dtype dropout = drop_factor > 0 ?
+            drop_mask[dim_i * count + count_i] : 1;
+        vals[count_i][dim_i] = drop_factor < dropout ?
+            ins1[count_i][dim_i] * ins2[count_i][dim_i] : 0.0f;
+    }
+}
+
+void PMultiForward(const std::vector<dtype*> &ins1,
+        const std::vector<dtype*> &ins2,
+        int count,
+        int dim,
+        const dtype* drop_mask,
+        dtype dropout,
+        std::vector<dtype*> &vals) {
+    int block_count = DefaultBlockCount(count * dim);
+    NumberPointerArray ins1_arr, ins2_arr, vals_arr;
+    ins1_arr.init((dtype**)ins1.data(), count);
+    ins2_arr.init((dtype**)ins2.data(), count);
+    vals_arr.init((dtype**)vals.data(), count);
+    KernelPMultiForward<<<block_count, TPB>>>((const dtype**)ins1_arr.value,
+            (const dtype**)ins2_arr.value,
+            count, dim, drop_mask, dropout, vals_arr.value);
 }
 
 __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,

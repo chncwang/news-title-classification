@@ -512,6 +512,13 @@ void MaxPoolForward(const void *graph, int count,
         const std::vector<int> &in_counts, int dim, int *hit_inputs);
 void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
         const int *hit_inputs, int count, int dim);
+void PMultiForward(const std::vector<dtype*> &ins1,
+        const std::vector<dtype*> &ins2,
+        int count,
+        int dim,
+        const dtype* drop_mask,
+        dtype dropout,
+        std::vector<dtype*> &vals);
 void CalculateLyForLinearBackward(const std::vector<dtype*> &ly_vec, dtype *ly,
         int count, int dim);
 void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,

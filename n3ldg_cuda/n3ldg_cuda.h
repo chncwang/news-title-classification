@@ -519,6 +519,15 @@ void PMultiForward(const std::vector<dtype*> &ins1,
         const dtype* drop_mask,
         dtype dropout,
         std::vector<dtype*> &vals);
+void PMultiBackward(const std::vector<dtype*> &losses,
+        const std::vector<dtype*> &in_vals1,
+        const std::vector<dtype*> &in_vals2,
+        int count,
+        int dim,
+        const dtype* drop_mask,
+        dtype drop_factor,
+        std::vector<dtype*> &in_losses1,
+        std::vector<dtype*> &in_losses2);
 void CalculateLyForLinearBackward(const std::vector<dtype*> &ly_vec, dtype *ly,
         int count, int dim);
 void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,

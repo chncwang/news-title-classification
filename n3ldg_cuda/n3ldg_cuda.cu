@@ -1550,6 +1550,54 @@ void PMultiForward(const std::vector<dtype*> &ins1,
             count, dim, drop_mask, dropout, vals_arr.value);
 }
 
+__global__ void KernelPMultiBackward(const dtype **losses,
+        const dtype **in_vals1,
+        const dtype **in_vals2,
+        int count,
+        int dim,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        dtype** in_losses1,
+        dtype** in_losses2) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < count * dim; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        dtype dropout = drop_factor > 0 ?
+            drop_mask[dim_i * count + count_i] : 1;
+        if (drop_factor < dropout) {
+            DeviceAtomicAdd(in_losses1[count_i] + dim_i,
+                    losses[count_i][dim_i] * in_vals2[count_i][dim_i]);
+            DeviceAtomicAdd(in_losses2[count_i] + dim_i,
+                    losses[count_i][dim_i] * in_vals1[count_i][dim_i]);
+        }
+    }
+}
+
+void PMultiBackward(const std::vector<dtype*> &losses,
+        const std::vector<dtype*> &in_vals1,
+        const std::vector<dtype*> &in_vals2,
+        int count,
+        int dim,
+        const dtype* drop_mask,
+        dtype drop_factor,
+        std::vector<dtype*> &in_losses1,
+        std::vector<dtype*> &in_losses2) {
+    int block_count = DefaultBlockCount(count * dim);
+    NumberPointerArray losses_arr, in_vals1_arr, in_vals2_arr, in_losses1_arr,
+                       in_losses2_arr;
+    losses_arr.init((dtype**)losses.data(), losses.size());
+    in_vals1_arr.init((dtype**)in_vals1.data(), in_vals1.size());
+    in_vals2_arr.init((dtype**)in_vals2.data(), in_vals2.size());
+    in_losses1_arr.init((dtype**)in_losses1.data(), in_losses1.size());
+    in_losses2_arr.init((dtype**)in_losses2.data(), in_losses2.size());
+    KernelPMultiBackward<<<block_count, TPB>>>((const dtype**)losses_arr.value,
+            (const dtype**)in_vals1_arr.value,
+            (const dtype**)in_vals2_arr.value, count, dim, drop_mask,
+            drop_factor, in_losses1_arr.value, in_losses2_arr.value);
+}
+
 __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
         int *correct_count, int *answers, int batchsize, int count, int dim) {
     volatile __shared__ int opt_label;

@@ -19,6 +19,7 @@
 #include <chrono>
 #include <thread>
 #include <numeric>
+#include <memory>
 #include "profiler.h"
 
 namespace n3ldg_cuda {
@@ -622,6 +623,8 @@ __global__ void KernelCopyForBiNodeForward(const dtype **x1s,
         } else if (i >= x1_total_len && i < x1_total_len + x2_total_len) {
             int len_i = (i - x1_total_len) / count;
             int count_i = (i - x1_total_len) % count;
+            KernelPrintLine("count:%d len:%d num:%f", count_i, len_i,
+                    x2s[count_i][len_i]);
             x2s_dest[i - x1_total_len] = x2s[count_i][len_i];
         } else {
             int b_i = (i - x1_total_len - x2_total_len);
@@ -658,6 +661,8 @@ void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
             x1_len,
             x2_len,
             b_len);
+    cudaPrintfDisplay(stdout, true);
+    cudaDeviceSynchronize();
 }
 
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
@@ -1596,6 +1601,111 @@ void PMultiBackward(const std::vector<dtype*> &losses,
             (const dtype**)in_vals1_arr.value,
             (const dtype**)in_vals2_arr.value, count, dim, drop_mask,
             drop_factor, in_losses1_arr.value, in_losses2_arr.value);
+}
+
+__global__ void KernelPAddForward(const dtype*** ins, int count, int dim,
+        int in_count,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        dtype **vals) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < count * dim; i+= step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        dtype dropout = drop_factor > 0 ?
+            drop_mask[dim_i * count + count_i] : 1;
+        if (drop_factor < dropout) {
+            dtype sum = ins[0][count_i][dim_i];
+            for (int j = 1; j < in_count; ++j) {
+                sum += ins[j][count_i][dim_i];
+            }
+            vals[count_i][dim_i] = sum;
+        } else {
+            vals[count_i][dim_i] = 0.0f;
+        }
+    }
+}
+
+void PAddForward(const std::vector<std::vector<dtype*>> &ins, int count,
+        int dim,
+        int in_count,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<dtype*> &vals) {
+    std::vector<std::shared_ptr<NumberPointerArray>> gpu_addr;
+    gpu_addr.reserve(ins.size());
+    for (const std::vector<dtype*> &x : ins) {
+        std::shared_ptr<NumberPointerArray> arr =
+            std::make_shared<NumberPointerArray>();
+        arr->init((dtype**)x.data(), x.size());
+        gpu_addr.push_back(arr);
+    }
+    std::vector<dtype**> ins_gpu;
+    ins_gpu.reserve(ins.size());
+    for (auto &ptr : gpu_addr) {
+        ins_gpu.push_back(ptr->value);
+    }
+
+    NumberPointerPointerArray in_arr;
+    in_arr.init(ins_gpu.data(), ins_gpu.size());
+    NumberPointerArray out_arr;
+    out_arr.init(vals.data(), vals.size());
+
+    int block_count = DefaultBlockCount(count * dim);
+    KernelPAddForward<<<block_count, TPB>>>((const dtype***)in_arr.value,
+            count, dim, in_count, drop_mask, drop_factor, out_arr.value);
+}
+
+__global__ void KernelPAddBackward(const dtype **losses, int count, int dim,
+        int in_count,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        dtype ***in_losses) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    int dim_mul_count = dim * count;
+    for (int i = index; i < dim_mul_count * in_count; i += step) {
+        int in_count_i = i / dim_mul_count;
+        int dim_mul_count_i = i % dim_mul_count;
+        int count_i = dim_mul_count_i / dim;
+        int dim_i = dim_mul_count_i % dim;
+        dtype dropout = drop_factor > 0 ?
+            drop_mask[dim_i * count + count_i] : 1;
+        if (drop_factor < dropout) {
+            DeviceAtomicAdd(in_losses[in_count_i][count_i] + dim_i,
+                    losses[count_i][dim_i]);
+        }
+    }
+}
+
+void PAddBackward(const std::vector<dtype*> &losses, int count, int dim,
+        int in_count,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<std::vector<dtype*>> &in_losses) {
+    std::vector<std::shared_ptr<NumberPointerArray>> gpu_addr;
+    gpu_addr.reserve(in_losses.size());
+    for (const std::vector<dtype*> &x : in_losses) {
+        std::shared_ptr<NumberPointerArray> arr =
+            std::make_shared<NumberPointerArray>();
+        arr->init((dtype**)x.data(), x.size());
+        gpu_addr.push_back(arr);
+    }
+    std::vector<dtype**> in_losses_gpu;
+    in_losses_gpu.reserve(in_losses.size());
+    for (auto &ptr : gpu_addr) {
+        in_losses_gpu.push_back(ptr->value);
+    }
+
+    NumberPointerPointerArray in_loss_arr;
+    in_loss_arr.init(in_losses_gpu.data(), in_losses_gpu.size());
+    NumberPointerArray out_loss_arr;
+    out_loss_arr.init((dtype**)losses.data(), losses.size());
+
+    int block_count = DefaultBlockCount(in_count * count * dim);
+    KernelPAddBackward<<<block_count, TPB>>>((const dtype**)out_loss_arr.value,
+            count, dim, in_count, drop_mask, drop_factor, in_loss_arr.value);
 }
 
 __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,

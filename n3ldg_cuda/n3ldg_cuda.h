@@ -440,14 +440,17 @@ enum ActivatedEnum {
     TANH,
     SIGMOID,
 };
-void Tanh(ActivatedEnum activated, const dtype *src,
+void Activated(ActivatedEnum activated, const dtype *src,
         const std::vector<dtype*>& dest,
         dtype* dest2,
         int len,
         bool is_being_trained,
         dtype drop_factor,
         const dtype *drop_mask);
-
+void Tanh(const std::vector<dtype*> &xs, int count, int dim,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<dtype*> &ys);
 void CopyForUniNodeForward(const void *graph, const dtype* b, dtype* xs_dest,
         dtype* b_dest, int count, int x_len, int b_len);
 void CopyForBiNodeForward(const std::vector<dtype*>& x1s,

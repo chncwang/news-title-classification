@@ -454,7 +454,7 @@ void CopyFromOneVectorToMultiVals(const void *graph, const dtype *src,
             count, len);
 }
 
-__global__ void KernelTanh(ActivatedEnum activated, const dtype *src, dtype**dest, dtype* dest2,
+__global__ void KernelActivated(ActivatedEnum activated, const dtype *src, dtype**dest, dtype* dest2,
         int count, int len, bool is_being_trained, dtype drop_factor,
         const dtype *drop_mask) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -469,7 +469,7 @@ __global__ void KernelTanh(ActivatedEnum activated, const dtype *src, dtype**des
         } else if (activated == ActivatedEnum::SIGMOID) {
             result = cuda_sigmoid(src[i]);
         } else {
-            printf("KernelTanh error\n");
+            printf("KernelActivated error\n");
             return;
         }
         if (is_being_trained) {
@@ -487,8 +487,12 @@ __global__ void KernelTanh(ActivatedEnum activated, const dtype *src, dtype**des
     }
 }
 
-void Tanh(ActivatedEnum activated, const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
-        int len, bool is_being_trained, dtype drop_factor,
+void Activated(ActivatedEnum activated, const dtype *src,
+        const std::vector<dtype*>& dest,
+        dtype *dest2,
+        int len,
+        bool is_being_trained,
+        dtype drop_factor,
         const dtype *drop_mask) {
     if (drop_factor < 0) {
         drop_factor = 0;
@@ -497,8 +501,40 @@ void Tanh(ActivatedEnum activated, const dtype *src, const std::vector<dtype*>& 
     NumberPointerArray dest_arr;
     dest_arr.init((dtype**)dest.data(), dest.size());
     int block_count = std::min((len * count - 1 + TPB) / TPB, BLOCK_COUNT);
-    KernelTanh<<<block_count, TPB>>>(activated, src, dest_arr.value,
+    KernelActivated<<<block_count, TPB>>>(activated, src, dest_arr.value,
             dest2, count, len, is_being_trained, drop_factor, drop_mask);
+}
+
+__global__ void KernelTanh(const dtype** xs, int count, int dim,
+        const dtype* drop_mask,
+        dtype drop_factor,
+        dtype**ys) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < dim * count; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        if (drop_mask[i] < drop_factor) {
+            ys[count_i][dim_i] = 0.0f;
+        } else {
+            ys[count_i][dim_i] = cuda_tanh(xs[count_i][dim_i]);
+        }
+    }
+}
+
+void Tanh(const std::vector<dtype*> &xs, int count, int dim,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<dtype*> &ys) {
+    if (drop_factor < 0) {
+        drop_factor = 0.0f;
+    }
+    NumberPointerArray x_arr, y_arr;
+    x_arr.init((dtype**)xs.data(), xs.size());
+    y_arr.init((dtype**)ys.data(), ys.size());
+    int block_count = DefaultBlockCount(count * dim);
+    KernelTanh<<<block_count, TPB>>>((const dtype**)x_arr.value, count, dim,
+            drop_mask, drop_factor, y_arr.value);
 }
 
 __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,

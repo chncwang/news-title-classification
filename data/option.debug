@@ -1,6 +1,6 @@
-batchSize = 2
-hiddenSize = 5
-wordEmbSize = 1
+batchSize = 1
+hiddenSize = 100
+wordEmbSize = 50
 dropProb = -1
 #wordCutOff = 4
 wordEmbFineTune = true

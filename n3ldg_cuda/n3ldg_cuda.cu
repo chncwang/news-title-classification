@@ -98,29 +98,6 @@ NumberPointerArray::~NumberPointerArray() {
     CallCuda(MemoryPool::Ins().Free(value));
 }
 
-void PageLockedNumberPointerArray::init(dtype **host_arr, int len) {
-    if (value != NULL) {
-        CallCuda(PageLockedMemoryPool::Ins().Free(value));
-        value = NULL;
-    }
-    CallCuda(PageLockedMemoryPool::Ins().Malloc((void**)&value,
-                len * sizeof(dtype*)));
-    memcpy(value, host_arr, len * sizeof(dtype*));
-    this->len = len;
-}
-
-PageLockedNumberPointerArray::~PageLockedNumberPointerArray() {
-    if (value != NULL) {
-        CallCuda(PageLockedMemoryPool::Ins().Free(value));
-    }
-}
-
-dtype **PageLockedNumberPointerArray::GetDevicePointer() const {
-    dtype **device_p;
-    CallCuda(cudaHostGetDevicePointer((void**)&device_p, (void*)value, 0));
-    return device_p;
-}
-
 void Memcpy(dtype *dest, dtype*src, int size, cudaMemcpyKind kind) {
     CallCuda(cudaMemcpy(dest, src, size, kind));
 }
@@ -239,31 +216,6 @@ void IntArray::init(int len) {
 
 IntArray::~IntArray() {
     CallCuda(MemoryPool::Ins().Free(value));
-}
-
-void PageLockedIntArray::init(int *host_arr, int len) {
-    if (value != NULL) {
-        CallCuda(PageLockedMemoryPool::Ins().Free(value));
-        value = NULL;
-    }
-    CallCuda(PageLockedMemoryPool::Ins().Malloc((void**)&value,
-                len * sizeof(int)));
-    memcpy(value, host_arr, len * sizeof(int));
-    this->len = len;
-}
-
-void PageLockedIntArray::init(int len) {
-    if (value != NULL) {
-        CallCuda(PageLockedMemoryPool::Ins().Free(value));
-        value = NULL;
-    }
-    CallCuda(PageLockedMemoryPool::Ins().Malloc((void**)&value,
-                len * sizeof(int)));
-    this->len = len;
-}
-
-PageLockedIntArray::~PageLockedIntArray() {
-    CallCuda(PageLockedMemoryPool::Ins().Free(value));
 }
 
 void BoolArray::init(bool *host_arr, int len) {
@@ -508,8 +460,6 @@ __global__ void KernelTanh(ActivatedEnum activated, const dtype *src, dtype**des
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int step = blockDim.x * gridDim.x;
 
-    __syncthreads();
-
     for (int i = index; i < len * count; i += step) {
         int count_i = i % count;
         int len_i = i / count;
@@ -537,16 +487,6 @@ __global__ void KernelTanh(ActivatedEnum activated, const dtype *src, dtype**des
     }
 }
 
-__global__ void KernelCountDrop(dtype *y, int dim) {
-    int count = 0;
-    for (int i = 0; i < dim; ++i) {
-        if (y[i] > -0.0001 && y[i] < 0.0001) {
-            ++count;
-        }
-    }
-    KernelPrintLine("drop count:%d", count);
-}
-
 void Tanh(ActivatedEnum activated, const dtype *src, const std::vector<dtype*>& dest, dtype *dest2,
         int len, bool is_being_trained, dtype drop_factor,
         const dtype *drop_mask) {
@@ -554,7 +494,7 @@ void Tanh(ActivatedEnum activated, const dtype *src, const std::vector<dtype*>& 
         drop_factor = 0;
     }
     int count = dest.size();
-    PageLockedNumberPointerArray dest_arr;
+    NumberPointerArray dest_arr;
     dest_arr.init((dtype**)dest.data(), dest.size());
     int block_count = std::min((len * count - 1 + TPB) / TPB, BLOCK_COUNT);
     KernelTanh<<<block_count, TPB>>>(activated, src, dest_arr.value,
@@ -623,8 +563,6 @@ __global__ void KernelCopyForBiNodeForward(const dtype **x1s,
         } else if (i >= x1_total_len && i < x1_total_len + x2_total_len) {
             int len_i = (i - x1_total_len) / count;
             int count_i = (i - x1_total_len) % count;
-            KernelPrintLine("count:%d len:%d num:%f", count_i, len_i,
-                    x2s[count_i][len_i]);
             x2s_dest[i - x1_total_len] = x2s[count_i][len_i];
         } else {
             int b_i = (i - x1_total_len - x2_total_len);
@@ -661,8 +599,6 @@ void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
             x1_len,
             x2_len,
             b_len);
-    cudaPrintfDisplay(stdout, true);
-    cudaDeviceSynchronize();
 }
 
 void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
@@ -816,7 +752,7 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
 #else
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
-    int min_size = 1000000000;
+    int64_t min_size = 100000000000;
     std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
         if (size <= it->size && min_size > it->size) {
@@ -860,53 +796,6 @@ cudaError_t MemoryPool::Free(void *p) {
 
     return cudaSuccess;
 #endif
-}
-
-cudaError_t PageLockedMemoryPool::Malloc(void **p, int size) {
-    assert(*p == NULL);
-    //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
-    //    busy_blocks_.size() << std::endl;
-    int min_size = 1000000000;
-    std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
-    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
-        if (size <= it->size && min_size > it->size) {
-            min_size = it->size;
-            min_it = it;
-        }
-    }
-
-    cudaError_t status = cudaSuccess;
-    if (min_it != free_blocks_.end()) {
-        //std::cout << "cache hit" << std::endl;
-        busy_blocks_.push_back(*min_it);
-        *p = min_it->p;
-        free_blocks_.erase(min_it);
-    } else {
-        //std::cout << "no block, malloc" << std::endl;
-        status = cudaHostAlloc(p, size, cudaHostAllocWriteCombined);
-        CallCuda(status);
-        MemoryBlock block(*p, size);
-        busy_blocks_.push_back(block);
-    }
-
-    return status;
-}
-
-cudaError_t PageLockedMemoryPool::Free(void *p) {
-//#if DEVICE_MEMORY == 1
-//    return cudaFreeHost(p);
-//#else
-    for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1;
-            --it) {
-        if (p == it->p) {
-            free_blocks_.push_back(*it);
-            busy_blocks_.erase(it);
-            break;
-        }
-    }
-
-    return cudaSuccess;
-//#endif
 }
 
 void Profiler::EndCudaEvent() {
@@ -1415,7 +1304,7 @@ void LookupBackward(const std::vector<int> &xids, int unknown_id,
         dtype *grad,
         bool *indexers) {
     int block_count = std::min((count * dim - 1 + TPB) / TPB, BLOCK_COUNT);
-    PageLockedIntArray pl_arr;
+    IntArray pl_arr;
     pl_arr.init((int*)xids.data(), xids.size());
     IntArray xid_arr;
     xid_arr.init((int*)pl_arr.value, xids.size());

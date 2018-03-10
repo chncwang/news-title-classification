@@ -11,7 +11,7 @@ namespace n3ldg_cuda {
 
 struct MemoryBlock {
     void *p;
-    int size;
+    int64_t size;
 
     MemoryBlock(void *p, int size) {
         this->p = p;
@@ -35,26 +35,6 @@ public:
     cudaError_t Free(void *p);
 private:
     MemoryPool() = default;
-    std::list<MemoryBlock> free_blocks_;
-    std::vector<MemoryBlock> busy_blocks_;
-};
-
-class PageLockedMemoryPool {
-public:
-    PageLockedMemoryPool(const PageLockedMemoryPool &) = delete;
-    static PageLockedMemoryPool& Ins() {
-        static PageLockedMemoryPool *p;
-        if (p == NULL) {
-            p = new PageLockedMemoryPool;
-            p->busy_blocks_.reserve(10000);
-        }
-        return *p;
-    }
-
-    cudaError_t Malloc(void **p, int size);
-    cudaError_t Free(void *p);
-private:
-    PageLockedMemoryPool() = default;
     std::list<MemoryBlock> free_blocks_;
     std::vector<MemoryBlock> busy_blocks_;
 };

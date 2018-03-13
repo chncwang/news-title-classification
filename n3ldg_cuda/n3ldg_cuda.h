@@ -470,7 +470,9 @@ void MatrixMultiplyMatrix(dtype *W, dtype *x, dtype *y, int row, int col,
         bool should_W_transpose = false);
 
 
-void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
+void CalculateLtyForUniBackward(ActivatedEnum activated,
+        const std::vector<dtype*> &ly,
+        const dtype *ty,
         const dtype *y,
         const dtype *drop_mask,
         dtype drop_factor,

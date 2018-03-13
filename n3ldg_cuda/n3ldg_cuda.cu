@@ -318,8 +318,7 @@ void Tensor2D::copyFromDeviceToHost() {
 void Assert(bool v) {
 #if TEST_CUDA
     if (!v) {
-        abort();
-        exit(1);
+        exit(0);
     }
 #endif
 }
@@ -592,14 +591,16 @@ __global__ void KernelCopyForBiNodeForward(const dtype **x1s,
     int total_len = x1_total_len + x2_total_len + b_total_len;
 
     for (int i = index; i < total_len; i += step) {
-        if (i < x1_total_len) {
+        if (i < x2_total_len) {
             int len_i = i / count;
             int count_i = i % count;
-            x1s_dest[i] = x1s[count_i][len_i];
-        } else if (i >= x1_total_len && i < x1_total_len + x2_total_len) {
-            int len_i = (i - x1_total_len) / count;
-            int count_i = (i - x1_total_len) % count;
-            x2s_dest[i - x1_total_len] = x2s[count_i][len_i];
+            printf("x2:i:%d count_i:%d len_i:%d val:%f x2s addr:%p x2 addr:%p\n", i, count_i,
+                    len_i, x2s[count_i][len_i], x2s, x2s[count_i]);
+            x2s_dest[i] = x2s[count_i][len_i];
+        } else if (i >= x2_total_len && i < x1_total_len + x2_total_len) {
+            int len_i = (i - x2_total_len) / count;
+            int count_i = (i - x2_total_len) % count;
+            x1s_dest[i - x2_total_len] = x1s[count_i][len_i];
         } else {
             int b_i = (i - x1_total_len - x2_total_len);
             int len_i = b_i / count;
@@ -624,7 +625,12 @@ void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
     NumberPointerArray x1_arr, x2_arr;
     x1_arr.init((dtype**)x1s.data(), x1s.size());
     x2_arr.init((dtype**)x2s.data(), x2s.size());
-    KernelCopyForBiNodeForward<<<block_count, TPB>>>(
+    for (int i = 0; i < x2s.size(); ++i) {
+        std::cout << i << std::endl;
+        std::cout << x2s.at(i) << std::endl;
+        PrintNums(x2s.at(i), x2_len);
+    }
+    KernelCopyForBiNodeForward<<<1, 1>>>(
             (const dtype**)x1_arr.value,
             (const dtype**)x2_arr.value,
             b,
@@ -663,11 +669,8 @@ __global__ void KernelVerify(dtype *host, dtype *device, int len,
         dtype loss = host[index] - device[index];
         if (DeviceAbs(loss) > 0.001) {
             *success = false;
-            printf("KernelVerify %s: host:%f device:%f loss:%f\n",
-                    message,
-                    host[index],
-                    device[index],
-                    loss);
+            printf("KernelVerify %s: host:%f device:%f loss:%f index:%d\n",
+                    message, host[index], device[index], loss, index);
             KernelPrintLine("KernelVerify: host:%f device:%f loss:%f",
                     host[index],
                     device[index],
@@ -839,7 +842,8 @@ void Profiler::EndCudaEvent() {
     EndEvent();
 }
 
-__global__ void KernelCalculateLtyForUniBackward(const dtype *const*ly,
+__global__ void KernelCalculateLtyForUniBackward(ActivatedEnum activated,
+        const dtype *const*ly,
         const dtype *ty,
         const dtype *y,
         const dtype *drop_mask,
@@ -854,15 +858,23 @@ __global__ void KernelCalculateLtyForUniBackward(const dtype *const*ly,
         int count_i = i % count;
         int dim_i = i / count;
         dtype yi = y[i];
-        if (drop_mask[i] <= drop_factor) {
+        if (drop_factor > 0.0f && drop_mask[i] < drop_factor) {
             lty[i] = 0.0f;
         } else {
-            lty[i] = ly[count_i][dim_i] * (1 - yi * yi);
+            if (activated == ActivatedEnum::TANH) {
+                lty[i] = ly[count_i][dim_i] * (1 - yi * yi);
+            } else if (activated == ActivatedEnum::SIGMOID) {
+                lty[i] = ly[count_i][dim_i] * yi * (1 - yi);
+            } else {
+                printf("KernelCalculateLtyForUniBackward error\n");
+            }
         }
     }
 }
 
-void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
+void CalculateLtyForUniBackward(ActivatedEnum activated,
+        const std::vector<dtype*> &ly,
+        const dtype *ty,
         const dtype *y,
         const dtype *drop_mask,
         dtype drop_factor,
@@ -875,8 +887,8 @@ void CalculateLtyForUniBackward(const std::vector<dtype*> &ly, const dtype *ty,
     NumberPointerArray ly_arr;
     ly_arr.init((dtype**)ly.data(), ly.size());
     int block_count = std::min(BLOCK_COUNT, (count * dim + TPB - 1) / TPB);
-    KernelCalculateLtyForUniBackward<<<block_count, TPB>>>(ly_arr.value, ty, y,
-            drop_mask, drop_factor, lty, count, dim);
+    KernelCalculateLtyForUniBackward<<<block_count, TPB>>>(activated,
+            ly_arr.value, ty, y, drop_mask, drop_factor, lty, count, dim);
 }
 
 __global__ void KernelCalculateLyForLinearBackward(const dtype *const*ly_vec,
@@ -1654,9 +1666,9 @@ __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
     __syncthreads();
 
     for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
-        if (shared_val[threadIdx.x + i] > shared_val[threadIdx.x]) {
-            shared_val[threadIdx.x] = shared_val[threadIdx.x + i];
-            max_indexes[threadIdx.x] = max_indexes[threadIdx.x + i];
+        if (shared_val[threadIdx.x + i] > shared_val[threadIdx.x]) { // race
+            shared_val[threadIdx.x] = shared_val[threadIdx.x + i]; // race
+            max_indexes[threadIdx.x] = max_indexes[threadIdx.x + i]; // race
         }
         __syncthreads();
     }
@@ -1677,7 +1689,7 @@ __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
 
     for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
         scores_sum[threadIdx.x] = scores_sum[threadIdx.x] +
-            scores_sum[threadIdx.x + i];
+            scores_sum[threadIdx.x + i]; // race
         __syncthreads();
     }
 

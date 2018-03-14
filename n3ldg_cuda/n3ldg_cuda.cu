@@ -630,7 +630,7 @@ void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
         std::cout << x2s.at(i) << std::endl;
         PrintNums(x2s.at(i), x2_len);
     }
-    KernelCopyForBiNodeForward<<<1, 1>>>(
+    KernelCopyForBiNodeForward<<<block_count, TPB>>>(
             (const dtype**)x1_arr.value,
             (const dtype**)x2_arr.value,
             b,

@@ -245,8 +245,10 @@ BoolArray::~BoolArray() {
 
 void Tensor1D::init(int dim) {
     initOnDevice(dim);
+#if TEST_CUDA
     v = new dtype[dim];
     zero();
+#endif
 }
 
 void Tensor1D::initOnDevice(int dim) {
@@ -278,10 +280,18 @@ void Tensor1D::copyFromDeviceToHost() {
     CallCuda(cudaMemcpy(v, value, dim * sizeof(dtype), cudaMemcpyDeviceToHost));
 }
 
-void Tensor2D::init(int row, int col) {
+void Tensor2D::initOnMemoryAndDevice(int row, int col) {
     initOnDevice(row, col);
     v = new dtype[row * col];
     zero();
+}
+
+void Tensor2D::init(int row, int col) {
+    initOnDevice(row, col);
+#if TEST_CUDA
+    v = new dtype[row * col];
+    zero();
+#endif
 }
 
 void Tensor2D::initOnDevice(int row, int col) {
@@ -318,7 +328,7 @@ void Tensor2D::copyFromDeviceToHost() {
 void Assert(bool v) {
 #if TEST_CUDA
     if (!v) {
-        exit(0);
+        abort();
     }
 #endif
 }
@@ -419,10 +429,10 @@ void InitCuda() {
 #if DEVICE_MEMORY == 0
     cnmemDevice_t device;
     device.size = 2000000000;
-    device.device = 0;
+    device.device = 1;
     cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
 #else
-    CallCuda(cudaSetDevice(0));
+    CallCuda(cudaSetDevice(1));
 #endif
     CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
     CallCuda(cudaPrintfInit());
@@ -504,7 +514,7 @@ void Activated(ActivatedEnum activated, const dtype *src,
             dest2, count, len, is_being_trained, drop_factor, drop_mask);
 }
 
-__global__ void KernelTanh(const dtype** xs, int count, int dim,
+__global__ void KernelTanhForward(const dtype** xs, int count, int dim,
         const dtype* drop_mask,
         dtype drop_factor,
         dtype**ys) {
@@ -521,7 +531,7 @@ __global__ void KernelTanh(const dtype** xs, int count, int dim,
     }
 }
 
-void Tanh(const std::vector<dtype*> &xs, int count, int dim,
+void TanhForward(const std::vector<dtype*> &xs, int count, int dim,
         const dtype *drop_mask,
         dtype drop_factor,
         std::vector<dtype*> &ys) {
@@ -532,8 +542,47 @@ void Tanh(const std::vector<dtype*> &xs, int count, int dim,
     x_arr.init((dtype**)xs.data(), xs.size());
     y_arr.init((dtype**)ys.data(), ys.size());
     int block_count = DefaultBlockCount(count * dim);
-    KernelTanh<<<block_count, TPB>>>((const dtype**)x_arr.value, count, dim,
-            drop_mask, drop_factor, y_arr.value);
+    KernelTanhForward<<<block_count, TPB>>>((const dtype**)x_arr.value, count,
+            dim, drop_mask, drop_factor, y_arr.value);
+}
+
+__global__ void KernelTanhBackward(const dtype **losses, const dtype **vals,
+        int count,
+        int dim,
+        const dtype* drop_mask,
+        dtype drop_factor,
+        dtype** in_losses) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    for (int i = index; i < dim * count; i += step) {
+        int count_i = i / dim;
+        int dim_i = i % dim;
+        if (drop_mask[i] > drop_factor) {
+            dtype v = losses[count_i][dim_i] * (1 - vals[count_i][dim_i] *
+                    vals[count_i][dim_i]);
+            atomicAdd(in_losses[count_i] + dim_i, v);
+        }
+    }
+}
+
+void TanhBackward(const std::vector<dtype*> &losses,
+        const std::vector<dtype*> &vals,
+        int count,
+        int dim,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<dtype*> &in_losses) {
+    if (drop_factor < 0) {
+        drop_factor = 0.0f;
+    }
+    NumberPointerArray loss_arr, val_arr, in_loss_arr;
+    loss_arr.init((dtype**)losses.data(), losses.size());
+    val_arr.init((dtype**)vals.data(), vals.size());
+    in_loss_arr.init((dtype**)in_losses.data(), in_losses.size());
+    int block_count = DefaultBlockCount(count * dim);
+    KernelTanhBackward<<<block_count, TPB>>>((const dtype**)loss_arr.value,
+            (const dtype**)val_arr.value, count, dim, drop_mask, drop_factor,
+            in_loss_arr.value);
 }
 
 __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
@@ -594,8 +643,6 @@ __global__ void KernelCopyForBiNodeForward(const dtype **x1s,
         if (i < x2_total_len) {
             int len_i = i / count;
             int count_i = i % count;
-            printf("x2:i:%d count_i:%d len_i:%d val:%f x2s addr:%p x2 addr:%p\n", i, count_i,
-                    len_i, x2s[count_i][len_i], x2s, x2s[count_i]);
             x2s_dest[i] = x2s[count_i][len_i];
         } else if (i >= x2_total_len && i < x1_total_len + x2_total_len) {
             int len_i = (i - x2_total_len) / count;
@@ -625,11 +672,6 @@ void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
     NumberPointerArray x1_arr, x2_arr;
     x1_arr.init((dtype**)x1s.data(), x1s.size());
     x2_arr.init((dtype**)x2s.data(), x2s.size());
-    for (int i = 0; i < x2s.size(); ++i) {
-        std::cout << i << std::endl;
-        std::cout << x2s.at(i) << std::endl;
-        PrintNums(x2s.at(i), x2_len);
-    }
     KernelCopyForBiNodeForward<<<block_count, TPB>>>(
             (const dtype**)x1_arr.value,
             (const dtype**)x2_arr.value,
@@ -819,20 +861,25 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
 }
 
 cudaError_t MemoryPool::Free(void *p) {
+    Profiler &profiler = Profiler::Ins();
 #if DEVICE_MEMORY == 0
     CallCnmem(cnmemFree(p, NULL));
 #elif DEVICE_MEMORY == 1
     return cudaFree(p);
 #else
+    profiler.BeginEvent("MemoryPool Free");
     for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1;
             --it) {
         if (p == it->p) {
             free_blocks_.push_back(*it);
+            profiler.BeginEvent("erase");
             busy_blocks_.erase(it);
+            profiler.EndEvent();
             break;
         }
     }
 
+    profiler.EndEvent();
     return cudaSuccess;
 #endif
 }

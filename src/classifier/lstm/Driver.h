@@ -66,6 +66,7 @@ public:
 
     inline dtype train(const vector<Example> &examples, int iter) {
         n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
+        profiler.SetEnabled(true);
         profiler.BeginEvent("train");
         resetEval();
         _cg.clearValue();
@@ -134,6 +135,7 @@ public:
         _cg.backward();
         profiler.EndCudaEvent();
         profiler.EndCudaEvent();
+        profiler.SetEnabled(false);
         return cost;
     }
 

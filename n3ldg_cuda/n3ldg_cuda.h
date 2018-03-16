@@ -186,7 +186,6 @@ struct Tensor1D {
         abort();
     }
     void init(int len);
-    void initOnDevice(int len);
     ~Tensor1D();
 
     void save(std::ofstream &s) const {
@@ -273,6 +272,8 @@ struct Tensor1D {
 
     void copyFromHostToDevice();
     void copyFromDeviceToHost();
+private:
+    void initOnDevice(int len);
 };
 
 struct Tensor2D {
@@ -288,7 +289,6 @@ struct Tensor2D {
         abort();
     }
     void init(int row, int col);
-    void initOnDevice(int row, int col);
     ~Tensor2D();
 
     void save(std::ofstream &s) const {
@@ -415,9 +415,12 @@ struct Tensor2D {
         return true;
 #endif
     }
+    void initOnMemoryAndDevice(int row, int col);
 
     void copyFromHostToDevice();
     void copyFromDeviceToHost();
+private:
+    void initOnDevice(int row, int col);
 };
 
 void Assert(bool v);
@@ -447,10 +450,17 @@ void Activated(ActivatedEnum activated, const dtype *src,
         bool is_being_trained,
         dtype drop_factor,
         const dtype *drop_mask);
-void Tanh(const std::vector<dtype*> &xs, int count, int dim,
+void TanhForward(const std::vector<dtype*> &xs, int count, int dim,
         const dtype *drop_mask,
         dtype drop_factor,
         std::vector<dtype*> &ys);
+void TanhBackward(const std::vector<dtype*> &losses,
+        const std::vector<dtype*> &vals,
+        int count,
+        int dim,
+        const dtype *drop_mask,
+        dtype drop_factor,
+        std::vector<dtype*> &in_losses);
 void CopyForUniNodeForward(const void *graph, const dtype* b, dtype* xs_dest,
         dtype* b_dest, int count, int x_len, int b_len);
 void CopyForBiNodeForward(const std::vector<dtype*>& x1s,

@@ -95,7 +95,9 @@ void NumberPointerArray::init(dtype **host_arr, int len) {
 }
 
 NumberPointerArray::~NumberPointerArray() {
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
 }
 
 void Memcpy(dtype *dest, dtype*src, int size, cudaMemcpyKind kind) {
@@ -136,7 +138,9 @@ void NumberArray::init(dtype *host_arr, int len) {
 }
 
 NumberArray::~NumberArray() {
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
 }
 
 void DeviceInt::init() {
@@ -191,7 +195,9 @@ void IntPointerArray::init(int **host_arr, int len) {
 }
 
 IntPointerArray::~IntPointerArray() {
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
 }
 
 void IntArray::init(int *host_arr, int len) {
@@ -215,7 +221,9 @@ void IntArray::init(int len) {
 }
 
 IntArray::~IntArray() {
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
 }
 
 void BoolArray::init(bool *host_arr, int len) {
@@ -240,7 +248,9 @@ void BoolArray::copyToHost(bool *host_arr) {
 }
 
 BoolArray::~BoolArray() {
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
 }
 
 void Tensor1D::init(int dim) {
@@ -264,7 +274,9 @@ Tensor1D::Tensor1D(const Tensor1D &t) {
 }
 
 Tensor1D::~Tensor1D() {
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
     if (v != NULL) {
         delete []v;
     }
@@ -311,7 +323,9 @@ Tensor2D::Tensor2D(const Tensor2D &t) {
 }
 
 Tensor2D::~Tensor2D() {
-    CallCuda(MemoryPool::Ins().Free(value));
+    if (value != NULL) {
+        CallCuda(MemoryPool::Ins().Free(value));
+    }
     if (v != NULL) {
         delete [] v;
     }
@@ -432,7 +446,7 @@ void InitCuda() {
     device.device = 1;
     cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
 #else
-    CallCuda(cudaSetDevice(1));
+    CallCuda(cudaSetDevice(0));
 #endif
     CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
     CallCuda(cudaPrintfInit());
@@ -831,8 +845,10 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
 #elif DEVICE_MEMORY == 1
     return cudaMalloc(p, size);
 #else
+    Profiler &profiler = Profiler::Ins();
     //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
     //    busy_blocks_.size() << std::endl;
+    profiler.BeginEvent("MemoryPool Malloc");
     int64_t min_size = 100000000000;
     std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
     for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
@@ -845,7 +861,7 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
     cudaError_t status = cudaSuccess;
     if (min_it != free_blocks_.end()) {
         //std::cout << "cache hit" << std::endl;
-        busy_blocks_.push_back(*min_it);
+        busy_blocks_.insert(std::make_pair(min_it->p, *min_it));
         *p = min_it->p;
         free_blocks_.erase(min_it);
     } else {
@@ -853,9 +869,9 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
         status = cudaMalloc(p, size);
         CallCuda(status);
         MemoryBlock block(*p, size);
-        busy_blocks_.push_back(block);
+        busy_blocks_.insert(std::make_pair(*p, block));
     }
-
+    profiler.EndEvent();
     return status;
 #endif
 }
@@ -868,16 +884,12 @@ cudaError_t MemoryPool::Free(void *p) {
     return cudaFree(p);
 #else
     profiler.BeginEvent("MemoryPool Free");
-    for (auto it = busy_blocks_.end() - 1; it != busy_blocks_.begin() - 1;
-            --it) {
-        if (p == it->p) {
-            free_blocks_.push_back(*it);
-            profiler.BeginEvent("erase");
-            busy_blocks_.erase(it);
-            profiler.EndEvent();
-            break;
-        }
+    auto it = busy_blocks_.find(p);
+    if (it == busy_blocks_.end()) {
+        abort();
     }
+    free_blocks_.push_back(it->second);
+    busy_blocks_.erase(it);
 
     profiler.EndEvent();
     return cudaSuccess;

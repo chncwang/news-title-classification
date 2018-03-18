@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <list>
+#include <unordered_map>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
@@ -36,7 +37,7 @@ public:
 private:
     MemoryPool() = default;
     std::list<MemoryBlock> free_blocks_;
-    std::vector<MemoryBlock> busy_blocks_;
+    std::unordered_map<void *, MemoryBlock> busy_blocks_;
 };
 
 }

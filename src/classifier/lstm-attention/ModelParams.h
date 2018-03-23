@@ -3,6 +3,8 @@
 
 #include "HyperParams.h"
 #include "MySoftMaxLoss.h"
+#include "LSTM1.h"
+#include "BiOP.h"
 #include <array>
 
 constexpr int CNN_LAYER = 1;
@@ -11,7 +13,10 @@ class ModelParams{
 public:
     LookupTable words;
     Alphabet wordAlpha;
-    std::array<UniParams, CNN_LAYER> hidden;
+    LSTM1Params left_to_right_lstm;
+    LSTM1Params right_to_left_lstm;
+    BiParams bi_params;
+    SelfAttentionParams self_attention_params;
 
     UniParams olayer_linear;
     MySoftMaxLoss loss;
@@ -23,22 +28,21 @@ public:
         }
         opts.wordDim = words.nDim;
         opts.labelSize = 32;
-        for (int i = 0; i < CNN_LAYER; ++i) {
-            if (i == 0) {
-                hidden.at(i).initial(1, (1 + 2 * opts.wordContext) * opts.wordDim, true);
-            } else {
-                hidden.at(i).initial(1, (1 + 2 * opts.wordContext) * opts.hiddenSize, true);
-            }
-        }
-        olayer_linear.initial(opts.labelSize, 1, true);
+
+        left_to_right_lstm.initial(opts.hiddenSize, opts.wordDim);
+        right_to_left_lstm.initial(opts.hiddenSize, opts.wordDim);
+        bi_params.initial(opts.hiddenSize, opts.hiddenSize, opts.hiddenSize, true);
+        self_attention_params.initial(opts.hiddenSize);
+        olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
         return true;
     }
 
     void exportModelParams(ModelUpdate& ada){
         words.exportAdaParams(ada);
-        for (int i = 0; i < CNN_LAYER; ++i) {
-            hidden.at(i).exportAdaParams(ada);
-        }
+        left_to_right_lstm.exportAdaParams(ada);
+        right_to_left_lstm.exportAdaParams(ada);
+        bi_params.exportAdaParams(ada);
+        self_attention_params.exportAdaParams(ada);
         olayer_linear.exportAdaParams(ada);
     }
 

@@ -462,7 +462,7 @@ void TanhBackward(const std::vector<dtype*> &losses,
         dtype drop_factor,
         std::vector<dtype*> &in_losses);
 void CopyForUniNodeForward(const void *graph, const dtype* b, dtype* xs_dest,
-        dtype* b_dest, int count, int x_len, int b_len);
+        dtype* b_dest, int count, int x_len, int b_len, bool use_b);
 void CopyForBiNodeForward(const std::vector<dtype*>& x1s,
         const std::vector<dtype *>& x2s,
         const dtype *b,
@@ -527,6 +527,9 @@ void MaxPoolForward(const void *graph, int count,
         const std::vector<int> &in_counts, int dim, int *hit_inputs);
 void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
         const int *hit_inputs, int count, int dim);
+void ScalarAttentionForward(const void *graph,
+        const std::vector<int> &in_counts, int count, int dim,
+        std::vector<dtype*> &masks);
 void PMultiForward(const std::vector<dtype*> &ins1,
         const std::vector<dtype*> &ins2,
         int count,

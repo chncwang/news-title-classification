@@ -46,11 +46,11 @@ public:
         _right_to_left_lstm.init(&model.right_to_left_lstm, opts.dropProb,
                 false);
         for (BiNode &bi : _bi_nodes) {
-            bi.init(opts.hiddenSize, opts.dropProb);
+            bi.init(1, opts.dropProb);
             bi.setParam(&model.bi_params);
         }
 
-        _max_pool_node.init(opts.hiddenSize, -1);
+        _max_pool_node.init(1, -1);
         _neural_output.init(opts.labelSize, -1);
         _neural_output.setParam(&model.olayer_linear);
         _modelParams = &model;

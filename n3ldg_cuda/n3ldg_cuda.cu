@@ -31,7 +31,7 @@ using std::endl;
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
 #define cuda_tanh(x) tanhf(x)
-#define cuda_exp(x) __expf(x)
+#define cuda_exp(x) expf(x)
 #else
 #define cuda_sqrt(x) sqrt(x)
 #define cuda_pow(x, y) pow(x, y)
@@ -342,7 +342,7 @@ void Tensor2D::copyFromDeviceToHost() {
 void Assert(bool v) {
 #if TEST_CUDA
     if (!v) {
-        abort();
+        exit(1);
     }
 #endif
 }
@@ -446,7 +446,7 @@ void InitCuda() {
     device.device = 1;
     cnmemInit(1, &device, CNMEM_FLAGS_DEFAULT);
 #else
-    CallCuda(cudaSetDevice(0));
+    CallCuda(cudaSetDevice(1));
 #endif
     CallCuda(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
     CallCuda(cudaPrintfInit());
@@ -604,7 +604,8 @@ __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
         dtype* b_dest,
         int count,
         int x_len,
-        int b_len) {
+        int b_len,
+        bool use_b) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int step = gridDim.x * blockDim.x;
     int x_total_len = count * x_len;
@@ -614,7 +615,7 @@ __global__ void KernelCopyForUniNodeForward(const dtype** xs, const dtype* b,
             int len_i = i / count;
             int count_i = i % count;
             xs_dest[i] = xs[count_i][len_i];
-        } else {
+        } else if (use_b) {
             int b_i = i - x_total_len;
             int len_i = b_i / count;
             b_dest[b_i] = b[len_i];
@@ -627,12 +628,13 @@ void CopyForUniNodeForward(const void *graph, const dtype* b,
         dtype* b_dest,
         int count,
         int x_len,
-        int b_len) {
+        int b_len,
+        bool use_b) {
     dtype **xs = (dtype**)((char*)graph + 2 * count * sizeof(dtype*));
     int len = x_len + b_len;
     int block_count = std::min((count * len - 1 + TPB) / TPB, 56);
     KernelCopyForUniNodeForward<<<block_count, TPB>>>((const dtype**)xs,
-            (const dtype*)b, xs_dest, b_dest, count, x_len, b_len);
+            (const dtype*)b, xs_dest, b_dest, count, x_len, b_len, use_b);
 }
 
 __global__ void KernelCopyForBiNodeForward(const dtype **x1s,
@@ -1519,6 +1521,94 @@ void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
             in_losses);
 }
 
+__global__ void KernelScalarAttentionForward(const dtype** ins,
+        const dtype **unnormeds,
+        const int64_t *in_counts,
+        int max_in_count,
+        int count,
+        int dim,
+        dtype **masks,
+        dtype **vals) {
+    __shared__ volatile extern dtype attention_shared_arr[];
+    volatile dtype *shared_unnormed_masks = attention_shared_arr + blockDim.x;
+    int count_i = blockIdx.y;
+    int in_count = in_counts[count_i];
+    int in_count_i = threadIdx.x;
+    int dim_i = blockIdx.x;
+    int global_in_count_i = blockIdx.y * max_in_count + threadIdx.x;
+    if (threadIdx.x < in_count) {
+        printf("kernel unnormeds:%p\n", unnormeds[global_in_count_i]);
+    }
+    dtype unnormed_mask = threadIdx.x < in_count ?
+        cuda_exp(unnormeds[global_in_count_i][0]) : 0.0f;
+    attention_shared_arr[threadIdx.x] = unnormed_mask;
+    shared_unnormed_masks[threadIdx.x] = unnormed_mask;
+    __syncthreads();
+
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        if (threadIdx.x < i) {
+            int plus_i = threadIdx.x + i;
+            attention_shared_arr[threadIdx.x] += attention_shared_arr[plus_i];
+        }
+        __syncthreads();
+    }
+
+    dtype mask = shared_unnormed_masks[threadIdx.x] / attention_shared_arr[0];
+    if (threadIdx.x < in_count) {
+        printf("kernel mask:%p\n", masks[blockIdx.y]);
+        masks[blockIdx.y][blockIdx.x * in_count + threadIdx.x] = mask;
+    }
+    printf("global_in_count_i:%d ins:%p\n", global_in_count_i, ins[global_in_count_i]);
+    dtype in = threadIdx.x < in_count ? ins[global_in_count_i][dim_i] : 0.0f;
+    attention_shared_arr[threadIdx.x] = threadIdx.x < in_count ?
+        mask * in : 0.0f;
+    __syncthreads();
+
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        if (threadIdx.x < i) {
+            int plus_i = threadIdx.x + i;
+            attention_shared_arr[threadIdx.x] += attention_shared_arr[plus_i];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        printf("kernel vals:%p\n", vals[blockIdx.y]);
+        vals[blockIdx.y][blockIdx.x] = attention_shared_arr[0];
+        printf("blockIdx.y:%d vals[count_i][dim_i]:%f\n", blockIdx.y, vals[blockIdx.y][dim_i]);
+    }
+}
+
+void ScalarAttentionForward(const void *graph,
+        const std::vector<int> &in_counts, int count, int dim,
+        std::vector<dtype*> &masks) {
+    int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
+    int thread_count = 8;
+    while (max_in_count > thread_count) {
+        thread_count <<= 1;
+    }
+    dim3 block_dim(dim, count, 1);
+
+    dtype **outs = (dtype**)graph;
+    graph = (char*)graph + 2 * count * sizeof(dtype*);
+    dtype **ins = (dtype**)graph;
+    graph = (char*)graph + count * max_in_count * sizeof(dtype*);
+    dtype **unnormeds = (dtype**)graph;
+    graph = (char*)graph + 3 * count * max_in_count * sizeof(dtype*);
+    int64_t *in_counts_device = (int64_t*)graph;
+    graph = (char*)graph + count * sizeof(int64_t);
+
+    NumberPointerArray mask_arr;
+    mask_arr.init(masks.data(), masks.size());
+
+    KernelScalarAttentionForward<<<block_dim, thread_count, 2 * thread_count *
+        sizeof(dtype)>>>((const dtype**)ins, (const dtype**)unnormeds,
+                in_counts_device, max_in_count, count, dim, mask_arr.value,
+                outs);
+    cudaDeviceSynchronize();
+    cudaPrintfDisplay(stdout, true);
+}
+
 __global__ void KernelPMultiForward(const dtype **ins1, const dtype **ins2,
         int count, int dim, const dtype* drop_mask, dtype drop_factor,
         dtype** vals) {
@@ -1707,14 +1797,14 @@ void PAddBackward(const std::vector<dtype*> &losses, int count, int dim,
 __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
         int *correct_count, int *answers, int batchsize, int count, int dim) {
     volatile __shared__ int opt_label;
-    volatile extern __shared__ char shared_arr[];
-    volatile dtype * shared_val = (dtype*)(shared_arr);
+    volatile extern __shared__ char softmax_shared_arr[];
+    volatile dtype * shared_val = (dtype*)(softmax_shared_arr);
     volatile int64_t *max_indexes =
-        (int64_t*)(shared_arr + sizeof(dtype) * blockDim.x);
-    volatile dtype * scores = (dtype*)(shared_arr + (sizeof(dtype) +
+        (int64_t*)(softmax_shared_arr + sizeof(dtype) * blockDim.x);
+    volatile dtype * scores = (dtype*)(softmax_shared_arr + (sizeof(dtype) +
                 sizeof(int64_t)) * blockDim.x);
-    volatile dtype * scores_sum = (dtype*)(shared_arr + (2 * sizeof(dtype) +
-                sizeof(int64_t)) * blockDim.x);
+    volatile dtype * scores_sum = (dtype*)(softmax_shared_arr +
+            (2 * sizeof(dtype) + sizeof(int64_t)) * blockDim.x);
     int dim_i = threadIdx.x;
     int count_i = blockIdx.x;
     if (count_i == 0 && dim_i == 0) {

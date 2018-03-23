@@ -527,9 +527,10 @@ void MaxPoolForward(const void *graph, int count,
         const std::vector<int> &in_counts, int dim, int *hit_inputs);
 void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
         const int *hit_inputs, int count, int dim);
-void ScalarAttentionForward(const void *graph,
+void ScalarAttentionForward(const std::vector<dtype*> &ins,
+        const std::vector<dtype*> &unnormeds,
         const std::vector<int> &in_counts, int count, int dim,
-        std::vector<dtype*> &masks);
+        std::vector<dtype*> &masks, std::vector<dtype*> &vals);
 void PMultiForward(const std::vector<dtype*> &ins1,
         const std::vector<dtype*> &ins2,
         int count,

@@ -1523,7 +1523,7 @@ void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
 
 __global__ void KernelScalarAttentionForward(const dtype** ins,
         const dtype **unnormeds,
-        const int64_t *in_counts,
+        const int *in_counts,
         int max_in_count,
         int count,
         int dim,
@@ -1536,9 +1536,6 @@ __global__ void KernelScalarAttentionForward(const dtype** ins,
     int in_count_i = threadIdx.x;
     int dim_i = blockIdx.x;
     int global_in_count_i = blockIdx.y * max_in_count + threadIdx.x;
-    if (threadIdx.x < in_count) {
-        printf("kernel unnormeds:%p\n", unnormeds[global_in_count_i]);
-    }
     dtype unnormed_mask = threadIdx.x < in_count ?
         cuda_exp(unnormeds[global_in_count_i][0]) : 0.0f;
     attention_shared_arr[threadIdx.x] = unnormed_mask;
@@ -1553,12 +1550,11 @@ __global__ void KernelScalarAttentionForward(const dtype** ins,
         __syncthreads();
     }
 
-    dtype mask = shared_unnormed_masks[threadIdx.x] / attention_shared_arr[0];
+    dtype mask = threadIdx.x < in_count ? shared_unnormed_masks[threadIdx.x] /
+        attention_shared_arr[0] : 0.0f;
     if (threadIdx.x < in_count) {
-        printf("kernel mask:%p\n", masks[blockIdx.y]);
         masks[blockIdx.y][blockIdx.x * in_count + threadIdx.x] = mask;
     }
-    printf("global_in_count_i:%d ins:%p\n", global_in_count_i, ins[global_in_count_i]);
     dtype in = threadIdx.x < in_count ? ins[global_in_count_i][dim_i] : 0.0f;
     attention_shared_arr[threadIdx.x] = threadIdx.x < in_count ?
         mask * in : 0.0f;
@@ -1573,15 +1569,14 @@ __global__ void KernelScalarAttentionForward(const dtype** ins,
     }
 
     if (threadIdx.x == 0) {
-        printf("kernel vals:%p\n", vals[blockIdx.y]);
         vals[blockIdx.y][blockIdx.x] = attention_shared_arr[0];
-        printf("blockIdx.y:%d vals[count_i][dim_i]:%f\n", blockIdx.y, vals[blockIdx.y][dim_i]);
     }
 }
 
-void ScalarAttentionForward(const void *graph,
+void ScalarAttentionForward(const std::vector<dtype*> &ins,
+        const std::vector<dtype*> &unnormeds,
         const std::vector<int> &in_counts, int count, int dim,
-        std::vector<dtype*> &masks) {
+        std::vector<dtype*> &masks, std::vector<dtype*> &vals) {
     int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
     int thread_count = 8;
     while (max_in_count > thread_count) {
@@ -1589,22 +1584,22 @@ void ScalarAttentionForward(const void *graph,
     }
     dim3 block_dim(dim, count, 1);
 
-    dtype **outs = (dtype**)graph;
-    graph = (char*)graph + 2 * count * sizeof(dtype*);
-    dtype **ins = (dtype**)graph;
-    graph = (char*)graph + count * max_in_count * sizeof(dtype*);
-    dtype **unnormeds = (dtype**)graph;
-    graph = (char*)graph + 3 * count * max_in_count * sizeof(dtype*);
-    int64_t *in_counts_device = (int64_t*)graph;
-    graph = (char*)graph + count * sizeof(int64_t);
-
+    NumberPointerArray in_arr;
+    in_arr.init((dtype**)ins.data(), ins.size());
+    NumberPointerArray unnormed_arr;
+    unnormed_arr.init((dtype**)unnormeds.data(), unnormeds.size());
     NumberPointerArray mask_arr;
-    mask_arr.init(masks.data(), masks.size());
+    mask_arr.init((dtype**)masks.data(), masks.size());
+    NumberPointerArray val_arr;
+    val_arr.init((dtype**)vals.data(), vals.size());
+    IntArray in_count_arr;
+    in_count_arr.init((int*)in_counts.data(), in_counts.size());
 
     KernelScalarAttentionForward<<<block_dim, thread_count, 2 * thread_count *
-        sizeof(dtype)>>>((const dtype**)ins, (const dtype**)unnormeds,
-                in_counts_device, max_in_count, count, dim, mask_arr.value,
-                outs);
+        sizeof(dtype)>>>((const dtype**)in_arr.value,
+                (const dtype**)unnormed_arr.value,
+                (const int*)in_count_arr.value,
+                max_in_count, count, dim, mask_arr.value, val_arr.value);
     cudaDeviceSynchronize();
     cudaPrintfDisplay(stdout, true);
 }

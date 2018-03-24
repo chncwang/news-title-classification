@@ -491,7 +491,7 @@ void CalculateLtyForUniBackward(ActivatedEnum activated,
         int dim);
 void AddLtyToParamBiasAndAddLxToInputLossesForUniBackward(const dtype *lty,
         const dtype *lx, dtype *b, std::vector<dtype*> &losses, int count,
-        int out_dim, int in_dim);
+        int out_dim, int in_dim, bool use_b);
 void AddLtyToParamBiasAndAddLxToInputLossesForBiBackward(const dtype *lty,
         const dtype *lx1,
         const dtype *lx2,
@@ -531,6 +531,14 @@ void ScalarAttentionForward(const std::vector<dtype*> &ins,
         const std::vector<dtype*> &unnormeds,
         const std::vector<int> &in_counts, int count, int dim,
         std::vector<dtype*> &masks, std::vector<dtype*> &vals);
+void ScalarAttentionBackward(const std::vector<dtype*> &losses,
+        const std::vector<dtype*> &in_vals,
+        const std::vector<dtype*> &masks,
+        const std::vector<int> &in_counts,
+        int count,
+        int dim,
+        std::vector<dtype*> &in_losses,
+        std::vector<dtype*> &unnormed_losses);
 void PMultiForward(const std::vector<dtype*> &ins1,
         const std::vector<dtype*> &ins2,
         int count,

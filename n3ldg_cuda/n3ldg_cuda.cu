@@ -1618,8 +1618,8 @@ __global__ void KernelAttentionMaskAndInLoss(const dtype **losses,
         return;
     }
     for (int i = threadIdx.x; i < dim; i += blockDim.x) {
-        atomicAdd(in_losses[global_in_count_i] + i,
-                losses[blockIdx.y][i] * masks[global_in_count_i][i]);
+        atomicAdd(in_losses[global_in_count_i] + i, losses[blockIdx.y][i] *
+                masks[blockIdx.y][in_count * threadIdx.x + blockIdx.x]);
     }
     att_mask_loss_shared_arr[threadIdx.x] = 0.0f;
     for (int i = threadIdx.x; i < dim; i += blockDim.x) {
@@ -1674,12 +1674,12 @@ __global__ void KernelScalarAttentionBackward(const dtype** masks,
     int in_count = in_counts[blockIdx.x];
     if (threadIdx.x < in_count && blockIdx.y == 0) {
         atomicAdd(unnormed_losses[global_in_count_i],
-                masks[global_in_count_i][blockIdx.y] *
+                masks[blockIdx.x][blockIdx.y * max_in_count + threadIdx.x] *
                 mask_losses[global_in_count_i]);
     }
     shared_att_bckwrd_arr[threadIdx.x] = threadIdx.x < in_count ?
-        masks[global_in_count_i][blockIdx.y] * mask_losses[global_in_count_i] :
-        0.0f;
+        masks[blockIdx.x][blockIdx.y * max_in_count + threadIdx.x] *
+        mask_losses[global_in_count_i] : 0.0f;
     __syncthreads();
     for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
         if (threadIdx.x < i) {
@@ -1690,7 +1690,7 @@ __global__ void KernelScalarAttentionBackward(const dtype** masks,
     }
     if (threadIdx.x < in_count && blockIdx.y == 0) {
         atomicAdd(unnormed_losses[global_in_count_i],
-                -shared_att_bckwrd_arr[0] * masks[global_in_count_i][0]);
+                -shared_att_bckwrd_arr[0] * masks[blockIdx.x][threadIdx.x]);
     }
 }
 

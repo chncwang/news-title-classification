@@ -539,6 +539,10 @@ void ScalarAttentionBackward(const std::vector<dtype*> &losses,
         int dim,
         std::vector<dtype*> &in_losses,
         std::vector<dtype*> &unnormed_losses);
+void VectorAttentionForward(const std::vector<dtype*> &ins,
+        const std::vector<dtype*> &unnormeds,
+        const std::vector<int> &in_counts, int count, int dim,
+        std::vector<dtype*> &masks, std::vector<dtype*> &vals);
 void PMultiForward(const std::vector<dtype*> &ins1,
         const std::vector<dtype*> &ins2,
         int count,

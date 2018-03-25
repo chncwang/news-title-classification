@@ -31,7 +31,7 @@ using std::endl;
 #define cuda_sqrt(x) sqrtf(x)
 #define cuda_pow(x, y) powf(x, y)
 #define cuda_tanh(x) tanhf(x)
-#define cuda_exp(x) expf(x)
+#define cuda_exp(x) __expf(x)
 #else
 #define cuda_sqrt(x) sqrt(x)
 #define cuda_pow(x, y) pow(x, y)
@@ -725,7 +725,7 @@ __global__ void KernelVerify(dtype *host, dtype *device, int len,
     int index = DeviceDefaultIndex();
     if (index < len) {
         dtype loss = host[index] - device[index];
-        if (DeviceAbs(loss) > 0.001) {
+        if (DeviceAbs(loss) > 0.0001) {
             *success = false;
             printf("KernelVerify %s: host:%f device:%f loss:%f index:%d\n",
                     message, host[index], device[index], loss, index);
@@ -988,29 +988,33 @@ __global__ void KernelAddLtyToParamBiasAndAddLxToInputLossesForUniBackward(
 
     int count_i = blockIdx.y * blockDim.x + threadIdx.x;
     int dim_i = blockIdx.x;
-    if (dim_i < out_dim && use_b) {
-        if (threadIdx.x == 0 && blockIdx.y == 0) {
-            global_block_count[dim_i] = 0;
-        }
-        int lty_index = dim_i * count + count_i;
-        shared_arr[threadIdx.x] = count_i < count ? lty[lty_index] : 0.0f;
-        __syncthreads();
-
-        for (int i = (TPB >> 1); i > 0; i>>=1) {
-            if (threadIdx.x < i) {
-                shared_arr[threadIdx.x] += shared_arr[threadIdx.x + i];
+    if (dim_i < out_dim) {
+        if (use_b) {
+            if (threadIdx.x == 0 && blockIdx.y == 0) {
+                global_block_count[dim_i] = 0;
             }
+            int lty_index = dim_i * count + count_i;
+            shared_arr[threadIdx.x] = count_i < count ? lty[lty_index] : 0.0f;
             __syncthreads();
-        }
 
-        if (threadIdx.x == 0) {
-            block_sums[gridDim.y * blockIdx.x + blockIdx.y] = shared_arr[0];
-            if (atomicAdd(global_block_count + dim_i, 1) == gridDim.y - 1) {
-                dtype sum = 0.0;
-                for (int i = 0; i < gridDim.y; ++i) {
-                    sum += block_sums[gridDim.y * blockIdx.x + i];
+            for (int i = (TPB >> 1); i > 0; i>>=1) {
+                if (threadIdx.x < i) {
+                    shared_arr[threadIdx.x] += shared_arr[threadIdx.x + i];
                 }
-                DeviceAtomicAdd(b + dim_i, sum);
+                __syncthreads();
+            }
+
+            if (threadIdx.x == 0) {
+                block_sums[gridDim.y * blockIdx.x + blockIdx.y] =
+                    shared_arr[0];
+                if (atomicAdd(global_block_count + dim_i, 1) ==
+                        gridDim.y - 1) {
+                    dtype sum = 0.0;
+                    for (int i = 0; i < gridDim.y; ++i) {
+                        sum += block_sums[gridDim.y * blockIdx.x + i];
+                    }
+                    DeviceAtomicAdd(b + dim_i, sum);
+                }
             }
         }
     } else {
@@ -1602,7 +1606,7 @@ void ScalarAttentionForward(const std::vector<dtype*> &ins,
                 max_in_count, count, dim, mask_arr.value, val_arr.value);
 }
 
-__global__ void KernelAttentionMaskAndInLoss(const dtype **losses,
+__global__ void KernelScalarAttentionMaskAndInLoss(const dtype **losses,
         const dtype **in_vals,
         const dtype **masks,
         const int *in_counts,
@@ -1611,6 +1615,9 @@ __global__ void KernelAttentionMaskAndInLoss(const dtype **losses,
         int dim,
         dtype *mask_losses,
         dtype **in_losses) {
+    // blockIdx.x : in_count_i
+    // blockIdx.y : count_i
+    // threadIdx.x : dim_i
     __shared__ extern volatile dtype att_mask_loss_shared_arr[];
     int in_count = in_counts[blockIdx.y];
     int global_in_count_i = blockIdx.y * max_in_count + blockIdx.x;
@@ -1623,8 +1630,8 @@ __global__ void KernelAttentionMaskAndInLoss(const dtype **losses,
     }
     att_mask_loss_shared_arr[threadIdx.x] = 0.0f;
     for (int i = threadIdx.x; i < dim; i += blockDim.x) {
-        att_mask_loss_shared_arr[i] += losses[blockIdx.y][i] *
-            in_vals[blockIdx.x][i];
+        att_mask_loss_shared_arr[threadIdx.x] += losses[blockIdx.y][i] *
+            in_vals[global_in_count_i][i];
     }
     __syncthreads();
     for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
@@ -1639,7 +1646,7 @@ __global__ void KernelAttentionMaskAndInLoss(const dtype **losses,
     }
 }
 
-void AttentionMaskAndInLoss(const dtype** losses,
+void ScalarAttentionMaskAndInLoss(const dtype** losses,
         const dtype** in_vals,
         const dtype **masks,
         const int *in_counts,
@@ -1657,7 +1664,7 @@ void AttentionMaskAndInLoss(const dtype** losses,
             thread_count <<= 1;
         }
     }
-    KernelAttentionMaskAndInLoss<<<block_dim, thread_count,
+    KernelScalarAttentionMaskAndInLoss<<<block_dim, thread_count,
         thread_count * sizeof(dtype)>>>(losses, in_vals, masks, in_counts,
                 max_in_count, count, dim, mask_losses, in_losses);
 }
@@ -1716,7 +1723,7 @@ void ScalarAttentionBackward(const std::vector<dtype*> &losses,
     NumberArray mask_loss_arr;
     mask_loss_arr.init(count * max_in_count);
 
-    AttentionMaskAndInLoss((const dtype**)loss_arr.value,
+    ScalarAttentionMaskAndInLoss((const dtype**)loss_arr.value,
             (const dtype**)in_val_arr.value, (const dtype**)mask_arr.value,
             (const int*)in_count_arr.value, max_in_count, count, dim,
             mask_loss_arr.value, in_loss_arr.value);
@@ -1731,6 +1738,86 @@ void ScalarAttentionBackward(const std::vector<dtype*> &losses,
                 (const dtype*)mask_loss_arr.value,
                 (const int*)in_count_arr.value, max_in_count, count, dim,
                 unnormed_loss_arr.value);
+}
+
+__global__ void KernelVectorAttentionForward(const dtype** ins,
+        const dtype **unnormeds,
+        const int *in_counts,
+        int max_in_count,
+        int count,
+        int dim,
+        dtype **masks,
+        dtype **vals) {
+    __shared__ volatile extern dtype attention_shared_arr[];
+    volatile dtype *shared_unnormed_masks = attention_shared_arr + blockDim.x;
+    int count_i = blockIdx.y;
+    int in_count = in_counts[count_i];
+    int dim_i = blockIdx.x;
+    int global_in_count_i = blockIdx.y * max_in_count + threadIdx.x;
+    dtype unnormed_mask = threadIdx.x < in_count ?
+        cuda_exp(unnormeds[global_in_count_i][blockIdx.x]) : 0.0f;
+    attention_shared_arr[threadIdx.x] = unnormed_mask;
+    shared_unnormed_masks[threadIdx.x] = unnormed_mask;
+    __syncthreads();
+
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        if (threadIdx.x < i) {
+            int plus_i = threadIdx.x + i;
+            attention_shared_arr[threadIdx.x] += attention_shared_arr[plus_i];
+        }
+        __syncthreads();
+    }
+
+    dtype mask = threadIdx.x < in_count ? shared_unnormed_masks[threadIdx.x] /
+        attention_shared_arr[0] : 0.0f;
+    if (threadIdx.x < in_count) {
+        masks[blockIdx.y][blockIdx.x * in_count + threadIdx.x] = mask;
+    }
+    dtype in = threadIdx.x < in_count ? ins[global_in_count_i][dim_i] : 0.0f;
+    attention_shared_arr[threadIdx.x] = threadIdx.x < in_count ?
+        mask * in : 0.0f;
+    __syncthreads();
+
+    for (int i = (blockDim.x >> 1); i > 0; i >>= 1) {
+        if (threadIdx.x < i) {
+            int plus_i = threadIdx.x + i;
+            attention_shared_arr[threadIdx.x] += attention_shared_arr[plus_i];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        vals[blockIdx.y][blockIdx.x] = attention_shared_arr[0];
+    }
+}
+
+void VectorAttentionForward(const std::vector<dtype*> &ins,
+        const std::vector<dtype*> &unnormeds,
+        const std::vector<int> &in_counts, int count, int dim,
+        std::vector<dtype*> &masks, std::vector<dtype*> &vals) {
+    int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
+    int thread_count = 8;
+    while (max_in_count > thread_count) {
+        thread_count <<= 1;
+    }
+    dim3 block_dim(dim, count, 1);
+
+    NumberPointerArray in_arr;
+    in_arr.init((dtype**)ins.data(), ins.size());
+    NumberPointerArray unnormed_arr;
+    unnormed_arr.init((dtype**)unnormeds.data(), unnormeds.size());
+    NumberPointerArray mask_arr;
+    mask_arr.init((dtype**)masks.data(), masks.size());
+    NumberPointerArray val_arr;
+    val_arr.init((dtype**)vals.data(), vals.size());
+    IntArray in_count_arr;
+    in_count_arr.init((int*)in_counts.data(), in_counts.size());
+
+    KernelVectorAttentionForward<<<block_dim, thread_count, 2 * thread_count *
+        sizeof(dtype)>>>((const dtype**)in_arr.value,
+                (const dtype**)unnormed_arr.value,
+                (const int*)in_count_arr.value,
+                max_in_count, count, dim, mask_arr.value, val_arr.value);
 }
 
 __global__ void KernelPMultiForward(const dtype **ins1, const dtype **ins2,
@@ -1921,14 +2008,10 @@ void PAddBackward(const std::vector<dtype*> &losses, int count, int dim,
 __global__ void KernelSoftMaxLoss(const dtype **vals, dtype **losses,
         int *correct_count, int *answers, int batchsize, int count, int dim) {
     volatile __shared__ int opt_label;
-    volatile extern __shared__ char softmax_shared_arr[];
-    volatile dtype * shared_val = (dtype*)(softmax_shared_arr);
-    volatile int64_t *max_indexes =
-        (int64_t*)(softmax_shared_arr + sizeof(dtype) * blockDim.x);
-    volatile dtype * scores = (dtype*)(softmax_shared_arr + (sizeof(dtype) +
-                sizeof(int64_t)) * blockDim.x);
-    volatile dtype * scores_sum = (dtype*)(softmax_shared_arr +
-            (2 * sizeof(dtype) + sizeof(int64_t)) * blockDim.x);
+    volatile __shared__ dtype shared_val[TPB];
+    volatile __shared__ int64_t max_indexes[TPB];
+    volatile __shared__ dtype scores_sum[TPB];
+    volatile __shared__ dtype scores[TPB];
     int dim_i = threadIdx.x;
     int count_i = blockIdx.x;
     if (count_i == 0 && dim_i == 0) {
@@ -1978,6 +2061,9 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
         int batchsize,
         int count,
         int dim) {
+    if (dim > TPB) {
+        abort();
+    }
     int thread_count = 1;
     while (dim > thread_count) {
         thread_count <<= 1;
@@ -1988,8 +2074,7 @@ void SoftMaxLoss(const std::vector<dtype*> &vals, std::vector<dtype*> &losses,
     loss_arr.init((dtype**)losses.data(), losses.size());
     IntArray answer_arr;
     answer_arr.init((int*)answers.data(), answers.size());
-    KernelSoftMaxLoss<<<count, thread_count,
-        (sizeof(int64_t) + 3 * sizeof(dtype)) * thread_count>>>(
+    KernelSoftMaxLoss<<<count, thread_count>>>(
             const_cast<const dtype **>(val_arr.value),
             const_cast<dtype **>(loss_arr.value),
             correct_count,
@@ -2062,9 +2147,11 @@ dtype SquareSum(const dtype *v, int len) {
     block_counter.init();
     DeviceNumber result;
     result.init();
+    std::cout << "len:" << len << std::endl;
     KernelSquareSum<<<block_count, TPB>>>(v, len,
             global_sum.value, block_counter.value, result.value);
     result.copyFromDeviceToHost();
+    std::cout << "result.v:" << result.v << std::endl;
     return result.v;
 }
 

@@ -81,9 +81,9 @@ IF(USE_CUDA)
     SET(CUDA_LIBRARIES ${CUDA_LIBRARIES} ${CUDA_curand_LIBRARY})
     MESSAGE("CUDA_LIBRARIES: ${CUDA_LIBRARIES}")
     SET(LIBS ${LIBS} ${CUDA_LIBRARIES})
-    INCLUDE_DIRECTORIES(eigen N3LDG ${SRC_DIR}/basic ${SRC_DIR}/classifier/lstm-attention n3ldg_cuda cnmem/include)
+    INCLUDE_DIRECTORIES(eigen N3LDG ${SRC_DIR}/basic ${SRC_DIR}/classifier/lstm-vector-attention n3ldg_cuda cnmem/include)
 else()
-    INCLUDE_DIRECTORIES(eigen N3LDG ${SRC_DIR}/basic ${SRC_DIR}/classifier/lstm-attention)
+    INCLUDE_DIRECTORIES(eigen N3LDG ${SRC_DIR}/basic ${SRC_DIR}/classifier/lstm-vector-attention)
 endif()
 
 

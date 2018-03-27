@@ -17,7 +17,7 @@ public:
     LSTM1Builder _left_to_right_lstm;
     LSTM1Builder _right_to_left_lstm;
     std::vector<BiNode> _bi_nodes;
-    SelfAttentionBuilder _attention;
+    SelfAttentionVBuilder _attention;
     LinearNode _neural_output;
 
     Graph *_graph;

@@ -16,7 +16,7 @@ public:
     LSTM1Params left_to_right_lstm;
     LSTM1Params right_to_left_lstm;
     BiParams bi_params;
-    SelfAttentionParams self_attention_params;
+    SelfAttentionVParams self_attention_params;
 
     UniParams olayer_linear;
     MySoftMaxLoss loss;

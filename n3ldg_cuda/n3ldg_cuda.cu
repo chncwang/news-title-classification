@@ -848,30 +848,25 @@ cudaError_t MemoryPool::Malloc(void **p, int size) {
     return cudaMalloc(p, size);
 #else
     Profiler &profiler = Profiler::Ins();
-    //std::cout << "free size:" << free_blocks_.size() << " busy size:" <<
-    //    busy_blocks_.size() << std::endl;
     profiler.BeginEvent("MemoryPool Malloc");
-    int64_t min_size = 100000000000;
-    std::list<MemoryBlock>::iterator min_it = free_blocks_.end();
-    for (auto it = free_blocks_.begin(); it != free_blocks_.end(); ++it) {
-        if (size <= it->size && min_size > it->size) {
-            min_size = it->size;
-            min_it = it;
-        }
+    int fit_size = 1;
+    int n = 0;
+    while (fit_size < size) {
+        fit_size <<= 1;
+        ++n;
     }
-
     cudaError_t status = cudaSuccess;
-    if (min_it != free_blocks_.end()) {
-        //std::cout << "cache hit" << std::endl;
-        busy_blocks_.insert(std::make_pair(min_it->p, *min_it));
-        *p = min_it->p;
-        free_blocks_.erase(min_it);
-    } else {
-        //std::cout << "no block, malloc" << std::endl;
-        status = cudaMalloc(p, size);
+    if (free_blocks_.at(n).empty()) {
+        status = cudaMalloc(p, fit_size);
         CallCuda(status);
-        MemoryBlock block(*p, size);
+        MemoryBlock block(*p, fit_size);
         busy_blocks_.insert(std::make_pair(*p, block));
+    } else {
+        int this_size = free_blocks_.at(n).size();
+        MemoryBlock &block = free_blocks_.at(n).at(this_size - 1);
+        *p = block.p;
+        busy_blocks_.insert(std::make_pair(block.p, block));
+        free_blocks_.at(n).resize(this_size - 1);
     }
     profiler.EndEvent();
     return status;
@@ -890,7 +885,13 @@ cudaError_t MemoryPool::Free(void *p) {
     if (it == busy_blocks_.end()) {
         abort();
     }
-    free_blocks_.push_back(it->second);
+    int size = it->second.size;
+    int n = 0;
+    while (size > 1) {
+        size >>= 1;
+        ++n;
+    }
+    free_blocks_.at(n).push_back(it->second);
     busy_blocks_.erase(it);
 
     profiler.EndEvent();

@@ -1,4 +1,4 @@
-batchSize = 1
+batchSize = 100
 hiddenSize = 200
 #hiddenSize = 50
 wordEmbSize = 200

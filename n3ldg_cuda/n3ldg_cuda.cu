@@ -2593,6 +2593,33 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
     KernelSelfPlusIters<<<block_count, TPB>>>(indexers, iters, row);
 }
 
+__global__ void KernelUpdateAdagrad(dtype *val, dtype *grad, int row, int col,
+        dtype *aux_square,
+        dtype alpha,
+        dtype reg,
+        dtype eps) {
+    int index = DeviceDefaultIndex();
+    int step = DeviceDefaultStep();
+    int len = row * col;
+    for (int i = index; i < len; i += step) {
+        if (row > 1 && col > 1) {
+            grad[i] += val[i] * reg;
+        }
+        aux_square[i] = aux_square[i] + grad[i] * grad[i];
+        val[i] = val[i] - grad[i] * alpha / cuda_sqrt(aux_square[i] + eps);
+    }
+}
+
+void UpdateAdagrad(dtype *val, dtype *grad, int row, int col,
+        dtype *aux_square,
+        dtype alpha,
+        dtype reg,
+        dtype eps) {
+    int block_count = DefaultBlockCount(row * col);
+    KernelUpdateAdagrad<<<block_count, TPB>>>(val, grad, row, col, aux_square,
+            alpha, reg, eps);
+}
+
 void *GraphHostAlloc() {
     void *m;
     CallCuda(cudaHostAlloc(&m, 10000000, cudaHostAllocWriteCombined));

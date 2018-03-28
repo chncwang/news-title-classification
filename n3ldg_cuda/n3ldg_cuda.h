@@ -625,6 +625,11 @@ void UpdateAdam(dtype *val, dtype *grad, int row, int col, dtype *aux_mean,
         dtype alpha,
         dtype reg,
         dtype eps);
+void UpdateAdagrad(dtype *val, dtype *grad, int row, int col,
+        dtype *aux_square,
+        dtype alpha,
+        dtype reg,
+        dtype eps);
 void *GraphHostAlloc();
 }
 

@@ -160,7 +160,7 @@ public:
 
 
     void updateModel() {
-        _ada.updateAdam(10);
+        _ada.update(10);
     }
 
     void checkgrad(const vector<Example> &examples, int iter) {

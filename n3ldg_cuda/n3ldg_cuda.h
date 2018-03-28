@@ -443,6 +443,12 @@ enum ActivatedEnum {
     TANH,
     SIGMOID,
 };
+
+enum PoolingEnum {
+    MAX,
+    MIN
+};
+
 void Activated(ActivatedEnum activated, const dtype *src,
         const std::vector<dtype*>& dest,
         dtype* dest2,
@@ -523,10 +529,11 @@ void LookupBackward(const std::vector<int> &xids, int unknown_id,
         int dim,
         dtype *grad,
         bool *indexers);
-void MaxPoolForward(const void *graph, int count,
+void PoolForward(PoolingEnum pooling, const void *graph, int count,
         const std::vector<int> &in_counts, int dim, int *hit_inputs);
-void MaxPoolBackward(const void *graph, const std::vector<int> &in_counts,
-        const int *hit_inputs, int count, int dim);
+void PoolBackward(const void *graph,
+        const std::vector<int> &in_counts, const int *hit_inputs, int count,
+        int dim);
 void ScalarAttentionForward(const std::vector<dtype*> &ins,
         const std::vector<dtype*> &unnormeds,
         const std::vector<int> &in_counts, int count, int dim,

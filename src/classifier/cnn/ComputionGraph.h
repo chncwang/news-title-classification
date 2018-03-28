@@ -13,7 +13,7 @@ public:
     std::vector<LookupNode> _input_nodes;
     std::array<WindowBuilder, CNN_LAYER> _window_builder;
     std::array<std::vector<UniNode>, CNN_LAYER> _uni_nodes;
-    MaxPoolNode _max_pool_node;
+    SumPoolNode _max_pool_node;
     LinearNode _neural_output;
 
     Graph *_graph;

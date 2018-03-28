@@ -446,7 +446,9 @@ enum ActivatedEnum {
 
 enum PoolingEnum {
     MAX,
-    MIN
+    MIN,
+    SUM,
+    AVG
 };
 
 void Activated(ActivatedEnum activated, const dtype *src,
@@ -534,6 +536,11 @@ void PoolForward(PoolingEnum pooling, const void *graph, int count,
 void PoolBackward(const void *graph,
         const std::vector<int> &in_counts, const int *hit_inputs, int count,
         int dim);
+void SumPoolForward(PoolingEnum pooling, const std::vector<dtype*> &in_vals,
+        int count,
+        int dim,
+        const std::vector<int> &in_counts,
+        std::vector<dtype*> &vals);
 void ScalarAttentionForward(const std::vector<dtype*> &ins,
         const std::vector<dtype*> &unnormeds,
         const std::vector<int> &in_counts, int count, int dim,

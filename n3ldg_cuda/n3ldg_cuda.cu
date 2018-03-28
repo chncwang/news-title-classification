@@ -1545,6 +1545,64 @@ void PoolBackward(const void *graph,
             in_losses);
 }
 
+__global__ void KernelSumPoolForward(PoolingEnum pooling,
+        const dtype **in_vals,
+        int count,
+        int dim,
+        const int *in_counts,
+        int max_in_count,
+        dtype **vals) {
+    __shared__ volatile extern dtype pool_shared_arr[];
+    int batch_i = blockIdx.y;
+    int in_count = in_counts[batch_i];
+    int in_count_i = threadIdx.x;
+    int dim_i = blockIdx.x;
+    if (in_count_i < in_count) {
+        pool_shared_arr[threadIdx.x] = in_vals[batch_i * max_in_count +
+            in_count_i][dim_i];
+    } else {
+        pool_shared_arr[threadIdx.x] = 0.0f;
+    }
+    __syncthreads();
+
+    for (int i = (blockDim.x >> 1); i > 0;i >>=1) {
+        if (threadIdx.x < i) {
+            int plus_i = threadIdx.x + i;
+            pool_shared_arr[threadIdx.x] += pool_shared_arr[plus_i];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        vals[batch_i][dim_i] = pooling == PoolingEnum::SUM ?
+            pool_shared_arr[0] : pool_shared_arr[0] / in_counts[batch_i];
+    }
+}
+
+void SumPoolForward(PoolingEnum pooling, const std::vector<dtype*> &in_vals,
+        int count,
+        int dim,
+        const std::vector<int> &in_counts,
+        std::vector<dtype*> &vals) {
+    int max_in_count = *std::max_element(in_counts.begin(), in_counts.end());
+    int thread_count = 8;
+    while (max_in_count > thread_count) {
+        thread_count <<= 1;
+    }
+    dim3 block_dim(dim, count, 1);
+    NumberPointerArray in_val_arr;
+    in_val_arr.init((dtype**)in_vals.data(), in_vals.size());
+    IntArray in_count_arr;
+    in_count_arr.init((int*)in_counts.data(), in_counts.size());
+    NumberPointerArray val_arr;
+    val_arr.init((dtype**)vals.data(), vals.size());
+
+    KernelSumPoolForward<<<block_dim, thread_count,
+        thread_count * sizeof(dtype)>>>(pooling,
+                (const dtype**)in_val_arr.value, count, dim,
+                (const int*)in_count_arr.value, max_in_count, val_arr.value);
+}
+
 __global__ void KernelScalarAttentionForward(const dtype** ins,
         const dtype **unnormeds,
         const int *in_counts,

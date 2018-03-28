@@ -541,6 +541,11 @@ void SumPoolForward(PoolingEnum pooling, const std::vector<dtype*> &in_vals,
         int dim,
         const std::vector<int> &in_counts,
         std::vector<dtype*> &vals);
+void SumPoolBackward(PoolingEnum pooling, const std::vector<dtype*> &losses,
+        const std::vector<int> &in_counts,
+        int count,
+        int dim,
+        std::vector<dtype*> &in_losses);
 void ScalarAttentionForward(const std::vector<dtype*> &ins,
         const std::vector<dtype*> &unnormeds,
         const std::vector<int> &in_counts, int count, int dim,

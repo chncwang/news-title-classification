@@ -1612,7 +1612,9 @@ __global__ void KernelSumBackward(PoolingEnum pooling, const dtype **losses,
     int global_in_count_i = blockIdx.x * max_in_count + blockIdx.y;
     if (blockIdx.y < in_counts[blockIdx.x] && threadIdx.x < dim) {
         atomicAdd(in_losses[global_in_count_i] + threadIdx.x,
-                losses[blockIdx.x][threadIdx.x]);
+                pooling == PoolingEnum::SUM ?
+                losses[blockIdx.x][threadIdx.x] :
+            losses[blockIdx.x][threadIdx.x] / in_counts[blockIdx.x]);
     }
 }
 

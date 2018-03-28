@@ -369,6 +369,10 @@ __device__ dtype cuda_sigmoid(dtype x) {
     return 1 / (1 + cuda_exp(-x));
 }
 
+__device__ dtype cuda_relu(dtype x) {
+    return x > 0.0f ? x : 0.0f;
+}
+
 void Random(dtype *v, int len, dtype bound) {
     dtype *mem = (dtype*)malloc(len * sizeof(dtype));
     assert(mem != NULL);
@@ -486,8 +490,13 @@ void CopyFromOneVectorToMultiVals(const void *graph, const dtype *src,
             count, len);
 }
 
-__global__ void KernelActivated(ActivatedEnum activated, const dtype *src, dtype**dest, dtype* dest2,
-        int count, int len, bool is_being_trained, dtype drop_factor,
+__global__ void KernelActivated(ActivatedEnum activated, const dtype *src,
+        dtype**dest,
+        dtype* dest2,
+        int count,
+        int len,
+        bool is_being_trained,
+        dtype drop_factor,
         const dtype *drop_mask) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int step = blockDim.x * gridDim.x;
@@ -500,6 +509,8 @@ __global__ void KernelActivated(ActivatedEnum activated, const dtype *src, dtype
             result = cuda_tanh(src[i]);
         } else if (activated == ActivatedEnum::SIGMOID) {
             result = cuda_sigmoid(src[i]);
+        } else if (activated == ActivatedEnum::RELU) {
+            result = cuda_relu(src[i]);
         } else {
             printf("KernelActivated error\n");
             return;
@@ -936,6 +947,8 @@ __global__ void KernelCalculateLtyForUniBackward(ActivatedEnum activated,
                 lty[i] = ly[count_i][dim_i] * (1 - yi * yi);
             } else if (activated == ActivatedEnum::SIGMOID) {
                 lty[i] = ly[count_i][dim_i] * yi * (1 - yi);
+            } else if (activated == ActivatedEnum::RELU) {
+                lty[i] = ty[i] > 0.0f ? ly[count_i][dim_i] : 0.0f;
             } else {
                 printf("KernelCalculateLtyForUniBackward error\n");
             }

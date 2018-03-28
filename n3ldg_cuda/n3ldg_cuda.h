@@ -442,6 +442,7 @@ void CopyFromOneVectorToMultiVals(const void *graph, const dtype *src,
 enum ActivatedEnum {
     TANH,
     SIGMOID,
+    RELU
 };
 
 enum PoolingEnum {

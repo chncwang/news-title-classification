@@ -43,6 +43,7 @@ public:
             _window_builder.at(i).init(i == 0? opts.wordDim : opts.hiddenSize, opts.wordContext);
             for (UniNode &n : _uni_nodes.at(i)) {
                 n.init(1, opts.dropProb);
+                n.setFunctions(frelu, drelu);
                 n.setParam(&model.hidden.at(i));
             }
         }

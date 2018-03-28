@@ -630,6 +630,12 @@ void UpdateAdagrad(dtype *val, dtype *grad, int row, int col,
         dtype alpha,
         dtype reg,
         dtype eps);
+void UpdateAdagrad(dtype *val, dtype *grad, int row, int col,
+        dtype *aux_square,
+        const bool *indexers,
+        dtype alpha,
+        dtype reg,
+        dtype eps);
 void *GraphHostAlloc();
 }
 

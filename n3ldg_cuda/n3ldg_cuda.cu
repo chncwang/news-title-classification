@@ -365,12 +365,44 @@ __device__ void DeviceAtomicAdd(float* address, float value) {
     } while ((old = atomicExch(address, new_old))!=0.0f);
 };
 
+__device__ dtype cuda_dtanh(dtype y) {
+    1.0f - y * y;
+}
+
 __device__ dtype cuda_sigmoid(dtype x) {
-    return 1 / (1 + cuda_exp(-x));
+    return 1.0f / (1.0f + cuda_exp(-x));
+}
+
+__device__ dtype cuda_dsigmoid(dtype y) {
+    return y * (1.0f - y);
 }
 
 __device__ dtype cuda_relu(dtype x) {
     return x > 0.0f ? x : 0.0f;
+}
+
+__device__ dtype cuda_drelu(dtype x) {
+    return x > 0.0f ? 1 : 0.0f;
+}
+
+__device__ dtype cuda_leaky_relu(dtype x) {
+    return x > 0.0f ? x : -0.1f * x;
+}
+
+__device__ dtype cuda_dleaky_relu(dtype x) {
+    return x > 0.0f ? 1.0f : -0.1f;
+}
+
+const dtype SELU_LAMBDA = 1.0507009873554804934193349852946;
+const dtype SELU_ALPHA = 1.6732632423543772848170429916717;
+
+__device__ dtype cuda_selu(dtype x) {
+    return x <= 0.0f ? SELU_LAMBDA * SELU_ALPHA * (cuda_exp(x) - 1.0f) :
+        SELU_LAMBDA * x;
+}
+
+__device__ dtype cuda_dselu(dtype x, dtype y) {
+    return x <= 0.0f ? SELU_LAMBDA * SELU_ALPHA + y : SELU_LAMBDA;
 }
 
 void Random(dtype *v, int len, dtype bound) {
@@ -511,6 +543,10 @@ __global__ void KernelActivated(ActivatedEnum activated, const dtype *src,
             result = cuda_sigmoid(src[i]);
         } else if (activated == ActivatedEnum::RELU) {
             result = cuda_relu(src[i]);
+        } else if (activated == ActivatedEnum::LEAKY_RELU) {
+            result = cuda_leaky_relu(src[i]);
+        } else if (activated == ActivatedEnum::SELU) {
+            result = cuda_selu(src[i]);
         } else {
             printf("KernelActivated error\n");
             return;
@@ -943,12 +979,17 @@ __global__ void KernelCalculateLtyForUniBackward(ActivatedEnum activated,
         if (drop_factor > 0.0f && drop_mask[i] < drop_factor) {
             lty[i] = 0.0f;
         } else {
+            dtype lyv = ly[count_i][dim_i];
             if (activated == ActivatedEnum::TANH) {
-                lty[i] = ly[count_i][dim_i] * (1 - yi * yi);
+                lty[i] = lyv * cuda_dtanh(yi);
             } else if (activated == ActivatedEnum::SIGMOID) {
-                lty[i] = ly[count_i][dim_i] * yi * (1 - yi);
+                lty[i] = lyv * cuda_dsigmoid(yi);
             } else if (activated == ActivatedEnum::RELU) {
-                lty[i] = ty[i] > 0.0f ? ly[count_i][dim_i] : 0.0f;
+                lty[i] = lyv * cuda_drelu(ty[i]);
+            } else if (activated == ActivatedEnum::LEAKY_RELU) {
+                lty[i] = lyv * cuda_dleaky_relu(ty[i]);
+            } else if (activated == ActivatedEnum::SELU) {
+                lty[i] = lyv * cuda_dselu(ty[i], yi);
             } else {
                 printf("KernelCalculateLtyForUniBackward error\n");
             }

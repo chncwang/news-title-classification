@@ -15,7 +15,7 @@ public:
     std::vector<LookupNode> _input_nodes;
     LSTM1Builder _left_to_right_lstm;
     LSTM1Builder _right_to_left_lstm;
-    std::vector<BiNode> _bi_nodes;
+    std::vector<ConcatNode> _concat_nodes;
     MinPoolNode _max_pool_node;
     LinearNode _neural_output;
 
@@ -31,7 +31,7 @@ public:
         _input_nodes.resize(length_upper_bound);
         _left_to_right_lstm.resize(length_upper_bound);
         _right_to_left_lstm.resize(length_upper_bound);
-        _bi_nodes.resize(length_upper_bound);
+        _concat_nodes.resize(length_upper_bound);
     }
 
     void initial(Graph *pcg, ModelParams &model, HyperParams &opts) {
@@ -45,12 +45,11 @@ public:
                 true);
         _right_to_left_lstm.init(&model.right_to_left_lstm, opts.dropProb,
                 false);
-        for (BiNode &bi : _bi_nodes) {
-            bi.init(opts.hiddenSize, opts.dropProb);
-            bi.setParam(&model.bi_params);
+        for (ConcatNode &concat : _concat_nodes) {
+            concat.init(opts.hiddenSize * 2, opts.dropProb);
         }
 
-        _max_pool_node.init(opts.hiddenSize, -1);
+        _max_pool_node.init(opts.hiddenSize * 2, -1);
         _neural_output.init(opts.labelSize, -1);
         _neural_output.setParam(&model.olayer_linear);
         _modelParams = &model;
@@ -69,12 +68,12 @@ public:
         _left_to_right_lstm.forward(_graph, input_node_ptrs);
         _right_to_left_lstm.forward(_graph, input_node_ptrs);
         for (int i = 0; i < feature.m_title_words.size(); ++i) {
-            _bi_nodes.at(i).forward(_graph,
+            _concat_nodes.at(i).forward(_graph,
                     &_left_to_right_lstm._hiddens.at(i),
                     &_right_to_left_lstm._hiddens.at(i));
         }
 
-        std::vector<Node*> bi_node_ptrs = toPointers<BiNode, Node>(_bi_nodes,
+        std::vector<Node*> bi_node_ptrs = toPointers<ConcatNode, Node>(_concat_nodes,
                 feature.m_title_words.size());
         _max_pool_node.forward(_graph, bi_node_ptrs);
         _neural_output.forward(_graph, &_max_pool_node);

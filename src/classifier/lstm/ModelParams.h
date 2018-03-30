@@ -32,7 +32,7 @@ public:
         right_to_left_lstm.initial(opts.hiddenSize, opts.wordDim);
         bi_params.initial(opts.hiddenSize, opts.hiddenSize, opts.hiddenSize, true);
 
-        olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
+        olayer_linear.initial(opts.labelSize, 2 * opts.hiddenSize, true);
         return true;
     }
 

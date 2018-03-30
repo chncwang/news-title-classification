@@ -1229,6 +1229,7 @@ void CalculateDropoutMask(dtype drop_factor, int count, int dim, dtype* mask) {
 
 __global__ void KernelConcatForward(dtype **ins, int64_t *in_dims,
         dtype **outs,
+        bool on_training,
         const dtype *drop_mask,
         dtype drop_factor,
         int count,
@@ -1240,10 +1241,26 @@ __global__ void KernelConcatForward(dtype **ins, int64_t *in_dims,
     for (int i = index; i < out_dim * count; i += step) {
         int out_dim_i = i % out_dim;
         int count_i = i / out_dim;
-        dtype dropout = drop_factor > 0 ?
-            drop_mask[out_dim_i * count + count_i] : 1;
-        if (dropout <= drop_factor) {
-            outs[count_i][out_dim_i] = 0.0f;
+        if (on_training) {
+            if (drop_factor > 0.0f && drop_mask[out_dim_i * count + count_i] <
+                    drop_factor) {
+                outs[count_i][out_dim_i] = 0.0f;
+            } else {
+                int in_dim_sum = 0;
+                int last_in_dim_sum;
+                int offset_j = 0;
+                for (int j = 0; j < in_count; ++j) {
+                    last_in_dim_sum = in_dim_sum;
+                    in_dim_sum += in_dims[j];
+                    offset_j = j;
+                    if (out_dim_i < in_dim_sum) {
+                        break;
+                    }
+                }
+                int in_dim_i = out_dim_i - last_in_dim_sum;
+                dtype v = ins[count_i * in_count + offset_j][in_dim_i];
+                outs[count_i][out_dim_i] = v;
+            }
         } else {
             int in_dim_sum = 0;
             int last_in_dim_sum;
@@ -1258,12 +1275,12 @@ __global__ void KernelConcatForward(dtype **ins, int64_t *in_dims,
             }
             int in_dim_i = out_dim_i - last_in_dim_sum;
             dtype v = ins[count_i * in_count + offset_j][in_dim_i];
-            outs[count_i][out_dim_i] = v;
+            outs[count_i][out_dim_i] = v * (1 - drop_factor);
         }
     }
 }
 
-void ConcatForward(const void *graph, const dtype *drop_mask,
+void ConcatForward(const void *graph, bool on_training, const dtype *drop_mask,
         dtype drop_factor, int count, int in_count, int out_dim) {
     assert(drop_factor < 1);
     if (drop_factor < 0) {
@@ -1276,8 +1293,8 @@ void ConcatForward(const void *graph, const dtype *drop_mask,
     dtype **ins = (dtype**)((char*)graph + offset);
     offset += 2 * count * in_count * sizeof(dtype*);
     int64_t *in_dims = (int64_t*)((char*)graph + offset);
-    KernelConcatForward<<<block_count, TPB>>>(ins, in_dims, outs, drop_mask,
-            drop_factor, count, in_count, out_dim);
+    KernelConcatForward<<<block_count, TPB>>>(ins, in_dims, outs, on_training,
+            drop_mask, drop_factor, count, in_count, out_dim);
 }
 
 __global__ void KernelConcatBackward(dtype** in_losses, int64_t *in_dims,

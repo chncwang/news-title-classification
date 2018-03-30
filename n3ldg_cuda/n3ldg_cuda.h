@@ -515,7 +515,7 @@ void AddLtyToParamBiasAndAddLxToInputLossesForBiBackward(const dtype *lty,
         int in_dim2);
 void CalculateDropoutMask(dtype dropout_ratio, int count, int dim,
         dtype *mask);
-void ConcatForward(const void *graph, const dtype *drop_mask,
+void ConcatForward(const void *graph, bool on_training, const dtype *drop_mask,
         dtype drop_factor, int count, int in_count, int out_dim);
 void ConcatBackward(const void *graph, const dtype *drop_mask,
         dtype drop_factor, int count, int in_count, int out_dim);

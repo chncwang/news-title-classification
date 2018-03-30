@@ -366,7 +366,7 @@ __device__ void DeviceAtomicAdd(float* address, float value) {
 };
 
 __device__ dtype cuda_dtanh(dtype y) {
-    1.0f - y * y;
+    return 1.0f - y * y;
 }
 
 __device__ dtype cuda_sigmoid(dtype x) {
@@ -552,7 +552,7 @@ __global__ void KernelActivated(ActivatedEnum activated, const dtype *src,
             return;
         }
         if (is_being_trained) {
-            if (drop_mask[i] <= drop_factor) {
+            if (drop_factor > 0 && drop_mask[i] <= drop_factor) {
                 dest[count_i][len_i] = 0.0f;
                 dest2[i] = result;
             } else {
@@ -593,7 +593,7 @@ __global__ void KernelTanhForward(const dtype** xs, int count, int dim,
     for (int i = index; i < dim * count; i += step) {
         int count_i = i / dim;
         int dim_i = i % dim;
-        if (drop_mask[i] < drop_factor) {
+        if (drop_factor > 0.0f && drop_mask[i] < drop_factor) {
             ys[count_i][dim_i] = 0.0f;
         } else {
             ys[count_i][dim_i] = cuda_tanh(xs[count_i][dim_i]);
@@ -627,7 +627,7 @@ __global__ void KernelTanhBackward(const dtype **losses, const dtype **vals,
     for (int i = index; i < dim * count; i += step) {
         int count_i = i / dim;
         int dim_i = i % dim;
-        if (drop_mask[i] > drop_factor) {
+        if (drop_factor <= 0.0f || drop_mask[i] > drop_factor) {
             dtype v = losses[count_i][dim_i] * (1 - vals[count_i][dim_i] *
                     vals[count_i][dim_i]);
             atomicAdd(in_losses[count_i] + dim_i, v);
@@ -1014,6 +1014,7 @@ void CalculateLtyForUniBackward(ActivatedEnum activated,
     int block_count = std::min(BLOCK_COUNT, (count * dim + TPB - 1) / TPB);
     KernelCalculateLtyForUniBackward<<<block_count, TPB>>>(activated,
             ly_arr.value, ty, y, drop_mask, drop_factor, lty, count, dim);
+    cudaDeviceSynchronize();
 }
 
 __global__ void KernelCalculateLyForLinearBackward(const dtype *const*ly_vec,
@@ -1388,6 +1389,7 @@ void BatchMemset(const std::vector<dtype*> &vec, int count, int dim,
 }
 
 __global__ void KernelLookupForward(const int *xids, const dtype *vocabulary,
+        bool on_training,
         const dtype *drop_mask,
         dtype drop_factor,
         int count,
@@ -1398,32 +1400,33 @@ __global__ void KernelLookupForward(const int *xids, const dtype *vocabulary,
     for (int i = index; i < count * dim; i += step) {
         int count_i = i / dim;
         int dim_i = i % dim;
-        dtype dropout = drop_factor > 0 ?
-            drop_mask[dim_i * count + count_i] : 1;
-        if (drop_factor < dropout) {
+        if (on_training) {
+            if (drop_factor > 0 &&
+                    drop_mask[dim_i * count + count_i] < drop_factor) {
+                vals[count_i][dim_i] = 0.0f;
+            } else {
+                int xid = xids[count_i];
+                if (xid >= 0) {
+                    int voc_i = xid * dim + dim_i;
+                    vals[count_i][dim_i] = vocabulary[voc_i];
+                } else {
+                    vals[count_i][dim_i] = 0.0f;
+                }
+            }
+        } else {
             int xid = xids[count_i];
             if (xid >= 0) {
                 int voc_i = xid * dim + dim_i;
-                vals[count_i][dim_i] = vocabulary[voc_i];
+                vals[count_i][dim_i] = vocabulary[voc_i] * (1 - drop_factor);
             } else {
                 vals[count_i][dim_i] = 0.0f;
             }
-        } else {
-            vals[count_i][dim_i] = 0.0f;
         }
-    }
-}
-
-__global__ void Print2DNums(dtype ** nums, int count, int dim) {
-    for (int i = 0; i < count; ++i) {
-        for (int j = 0; j < dim; ++j) {
-            printf("%f,", nums[i][j]);
-        }
-        printf("\n");
     }
 }
 
 void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
+        bool on_training,
         const dtype *drop_mask,
         dtype drop_factor,
         int count,
@@ -1438,7 +1441,7 @@ void LookupForward(const std::vector<int> &xids, const dtype *vocabulary,
     NumberPointerArray val_arr;
     val_arr.init((dtype**)vals.data(), vals.size());
     KernelLookupForward<<<block_count, TPB>>>(xid_arr.value, vocabulary,
-            drop_mask, drop_factor,  count, dim,
+            on_training, drop_mask, drop_factor,  count, dim,
             const_cast<dtype**>(val_arr.value));
 }
 
@@ -2124,7 +2127,11 @@ void VectorAttentionBackward(const std::vector<dtype*> &losses,
 }
 
 __global__ void KernelPMultiForward(const dtype **ins1, const dtype **ins2,
-        int count, int dim, const dtype* drop_mask, dtype drop_factor,
+        int count,
+        int dim,
+        bool on_training,
+        const dtype* drop_mask,
+        dtype drop_factor,
         dtype** vals) {
     int index = DeviceDefaultIndex();
     int step = DeviceDefaultStep();
@@ -2135,6 +2142,18 @@ __global__ void KernelPMultiForward(const dtype **ins1, const dtype **ins2,
             drop_mask[dim_i * count + count_i] : 1;
         vals[count_i][dim_i] = drop_factor < dropout ?
             ins1[count_i][dim_i] * ins2[count_i][dim_i] : 0.0f;
+        if (on_training) {
+            if (drop_factor > 0.0f &&
+                    drop_mask[dim_i * count + count_i] < drop_factor) {
+                vals[count_i][dim_i] = 0.0f;
+            } else {
+                vals[count_i][dim_i] = ins1[count_i][dim_i] *
+                    ins2[count_i][dim_i];
+            }
+        } else {
+            vals[count_i][dim_i] = (1 - drop_factor) * ins1[count_i][dim_i] *
+                    ins2[count_i][dim_i];
+        }
     }
 }
 
@@ -2142,6 +2161,7 @@ void PMultiForward(const std::vector<dtype*> &ins1,
         const std::vector<dtype*> &ins2,
         int count,
         int dim,
+        bool on_training,
         const dtype* drop_mask,
         dtype dropout,
         std::vector<dtype*> &vals) {
@@ -2150,9 +2170,12 @@ void PMultiForward(const std::vector<dtype*> &ins1,
     ins1_arr.init((dtype**)ins1.data(), count);
     ins2_arr.init((dtype**)ins2.data(), count);
     vals_arr.init((dtype**)vals.data(), count);
+    if (dropout < 0) {
+        dropout = 0;
+    }
     KernelPMultiForward<<<block_count, TPB>>>((const dtype**)ins1_arr.value,
-            (const dtype**)ins2_arr.value,
-            count, dim, drop_mask, dropout, vals_arr.value);
+            (const dtype**)ins2_arr.value, count, dim, on_training,drop_mask,
+            dropout, vals_arr.value);
 }
 
 __global__ void KernelPMultiBackward(const dtype **losses,

@@ -42,13 +42,13 @@ public:
         for (int i = 0; i < CNN_LAYER; ++i) {
             _window_builder.at(i).init(i == 0? opts.wordDim : opts.hiddenSize, opts.wordContext);
             for (UniNode &n : _uni_nodes.at(i)) {
-                n.init(1, opts.dropProb);
-                n.setFunctions(fselu, dselu);
+                n.init(opts.hiddenSize, opts.dropProb);
+                n.setFunctions(ftanh, dtanh);
                 n.setParam(&model.hidden.at(i));
             }
         }
 
-        _max_pool_node.init(1, -1);
+        _max_pool_node.init(opts.hiddenSize, -1);
         _neural_output.init(opts.labelSize, -1);
         _neural_output.setParam(&model.olayer_linear);
         _modelParams = &model;

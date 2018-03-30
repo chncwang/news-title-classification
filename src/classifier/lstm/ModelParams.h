@@ -30,9 +30,9 @@ public:
 
         left_to_right_lstm.initial(opts.hiddenSize, opts.wordDim);
         right_to_left_lstm.initial(opts.hiddenSize, opts.wordDim);
-        bi_params.initial(1, opts.hiddenSize, opts.hiddenSize, true);
+        bi_params.initial(opts.hiddenSize, opts.hiddenSize, opts.hiddenSize, true);
 
-        olayer_linear.initial(opts.labelSize, 1, true);
+        olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
         return true;
     }
 

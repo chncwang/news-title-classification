@@ -201,7 +201,6 @@ void Classifier::train(const string &trainFile, const string &devFile,
             << "s" << std::endl;
         float accuracy = metric.getAccuracy();
         std::cout << "train set acc:" << metric.getAccuracy() << std::endl;
-        continue;
 
         float dev_acc = 0.0;
         Metric dev_metric;

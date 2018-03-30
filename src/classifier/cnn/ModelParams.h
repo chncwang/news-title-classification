@@ -25,12 +25,12 @@ public:
         opts.labelSize = 32;
         for (int i = 0; i < CNN_LAYER; ++i) {
             if (i == 0) {
-                hidden.at(i).initial(1, (1 + 2 * opts.wordContext) * opts.wordDim, true);
+                hidden.at(i).initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.wordDim, true);
             } else {
-                hidden.at(i).initial(1, (1 + 2 * opts.wordContext) * opts.hiddenSize, true);
+                hidden.at(i).initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.hiddenSize, true);
             }
         }
-        olayer_linear.initial(opts.labelSize, 1, true);
+        olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
         return true;
     }
 

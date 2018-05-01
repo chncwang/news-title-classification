@@ -66,7 +66,6 @@ public:
 
     inline dtype train(const vector<Example> &examples, int iter) {
         n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
-        profiler.SetEnabled(true);
         profiler.BeginEvent("train");
         resetEval();
         _cg.clearValue();
@@ -105,7 +104,7 @@ public:
         profiler.BeginEvent("softmax");
         n3ldg_cuda::DeviceInt correct_count;
         correct_count.init();
-        _modelparams.loss.loss(outputs, answers, correct_count, example_num);
+        softMaxLoss(outputs, answers, correct_count, example_num);
         correct_count.copyFromDeviceToHost();
         profiler.EndCudaEvent();
 #if TEST_CUDA
@@ -135,7 +134,6 @@ public:
         _cg.backward();
         profiler.EndCudaEvent();
         profiler.EndCudaEvent();
-        profiler.SetEnabled(false);
         return cost;
     }
 
@@ -145,7 +143,20 @@ public:
         _cg.compute();
 
         int intResult;
+#if USE_GPU
+        softMaxPredict(&_builders.at(0)._neural_output, intResult);
+#if TEST_CUDA
+        int cpuResult;
+        _modelparams.loss.predict(&_builders.at(0)._neural_output, cpuResult, excluded_class );
+        if (cpuResult != intResult) {
+            std::cout << "cpuResult:" << cpuResult << " intResult:" <<
+                intResult << std::endll;
+            abort();
+        }
+#endif
+#else
         _modelparams.loss.predict(&_builders.at(0)._neural_output, intResult, excluded_class );
+#endif
         result = static_cast<Category>(intResult);
     }
 
@@ -162,7 +173,7 @@ public:
 
 
     void updateModel() {
-        _ada.updateAdam(10);
+        _ada.update(10);
     }
 
     void checkgrad(const vector<Example> &examples, int iter) {

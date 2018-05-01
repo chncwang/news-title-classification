@@ -8,6 +8,18 @@
 #include "UniOP.h"
 #include <array>
 
+class WordCounter {
+public:
+    int counter = 0;
+    static WordCounter& GetInstance() {
+        static WordCounter *w = NULL;
+        if (w == NULL) {
+            w = new WordCounter;
+        }
+        return *w;
+    }
+};
+
 class GraphBuilder {
 public:
     std::vector<LookupNode> _input_nodes;
@@ -64,6 +76,7 @@ public:
         std::vector<Node*> input_node_ptrs =
             toPointers<LookupNode, Node>(_input_nodes,
                     feature.m_title_words.size());
+        WordCounter::GetInstance().counter += feature.m_title_words.size();
         for (int i = 0; i < CNN_LAYER; ++i) {
             if (i == 0) {
                 _window_builder.at(i).forward(_graph, input_node_ptrs);

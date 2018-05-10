@@ -143,15 +143,23 @@ public:
         _cg.compute();
 
         int intResult;
+        Node &out = _builders.at(0)._neural_output;
 #if USE_GPU
-        softMaxPredict(&_builders.at(0)._neural_output, intResult);
+        softMaxPredict(&out, intResult);
 #if TEST_CUDA
         int cpuResult;
-        _modelparams.loss.predict(&_builders.at(0)._neural_output, cpuResult, excluded_class );
+        _modelparams.loss.predict(&out, cpuResult, excluded_class );
         if (cpuResult != intResult) {
             std::cout << "cpuResult:" << cpuResult << " intResult:" <<
-                intResult << std::endll;
+                intResult << std::endl;
+            for (int i = 0; i < _builders.at(0)._neural_output.dim; ++i) {
+                std::cout << out.val[i] << std::endl;
+            }
+            std::cout << "gpu:" << std::endl;
+            n3ldg_cuda::PrintNums(out.val.value, out.dim);
             abort();
+        } else {
+            std::cout << "predict right " << cpuResult << std::endl;
         }
 #endif
 #else
@@ -173,7 +181,7 @@ public:
 
 
     void updateModel() {
-        _ada.update(10);
+        _ada.updateAdam(10);
     }
 
     void checkgrad(const vector<Example> &examples, int iter) {

@@ -1,8 +1,8 @@
-batchSize = 1024
+batchSize = 100
 hiddenSize = 100
 #hiddenSize = 50
-wordEmbSize = 100
-dropProb = 0.1
+wordEmbSize = 50
+dropProb = -1
 #wordCutOff = 4
 wordEmbFineTune = true
 maxIter = 1000

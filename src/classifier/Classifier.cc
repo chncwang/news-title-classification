@@ -7,7 +7,7 @@
 #include "Reader.h"
 #include "DomainLoss.h"
 #if USE_GPU
-#include "n3ldg_cuda.h"
+#include "N3LDG_cuda.h"
 #endif
 
 Classifier::Classifier(int memsize) : m_driver(memsize) {
@@ -113,7 +113,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
         m_options.load(optionFile);
     m_options.showOptions();
 
-    vector<Instance> rawtrainInsts = readInstancesFromFile(trainFile);
+    vector<Instance> rawtrainInsts = readInstancesFromFile(trainFile, m_options.maxInstance);
     vector<Instance> trainInsts;
     for (Instance &ins : rawtrainInsts) {
         trainInsts.push_back(ins);
@@ -272,9 +272,6 @@ Category Classifier::predict(const Feature &feature, int excluded_class) {
 //}
 
 int main(int argc, char *argv[]) {
-#if USE_GPU
-    n3ldg_cuda::InitCuda();
-#endif
     std::string trainFile = "", devFile = "", testFile = "", modelFile = "", optionFile = "";
     std::string outputFile = "";
     bool bTrain = false;
@@ -297,6 +294,11 @@ int main(int argc, char *argv[]) {
             "output file to test, must when testing", outputFile);
     ah.new_named_int("memsize", "memorySize", "named_int",
             "This argument decides the size of static memory allocation", memsize);
+    int device_id;
+    ah.new_named_int("d", "device", "device id", "device id", device_id);
+#if USE_GPU
+    n3ldg_cuda::InitCuda(device_id);
+#endif
 
     ah.process(argc, argv);
 

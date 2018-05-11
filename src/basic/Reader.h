@@ -11,6 +11,7 @@
 
 #include "Instance.h"
 #include "Targets.h"
+#include "Options.h"
 
 std::vector<std::string> readLines(const std::string &fullFileName) {
     std::vector<string> lines;
@@ -33,13 +34,17 @@ void readLineToInstance(const std::string &line, Instance *instance) {
     instance->m_title_words = std::move(words);
 }
 
-std::vector<Instance> readInstancesFromFile(const std::string &fullFileName) {
+std::vector<Instance> readInstancesFromFile(const std::string &fullFileName, int limit = 100000000) {
     std::vector<std::string> lines = readLines(fullFileName);
     std::vector<Instance> instances;
+    int i = 0;
     for (const std::string &line : lines) {
         Instance instance;
         readLineToInstance(line, &instance);
         instances.push_back(instance);
+        if (++i >= limit) {
+            break;
+        }
     }
 
     return instances;

@@ -6,7 +6,7 @@
 #include "Node.h"
 #include "Category.h"
 #if USE_GPU
-#include "n3ldg_cuda.h"
+#include "N3LDG_cuda.h"
 #endif
 
 class MySoftMaxLoss {

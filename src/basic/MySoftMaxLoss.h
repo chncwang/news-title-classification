@@ -94,10 +94,10 @@ public:
 
     inline dtype cost(PNode x, Category answer, int batchsize = 1) {
         int nDim = x->dim;
-        int labelsize = 3;
+        int labelsize = 32;
         if (labelsize != nDim) {
             std::cerr << "softmax_loss error: dim size invalid" << std::endl;
-            return -1.0;
+            abort();
         }
 
         NRVec<dtype> scores(nDim);

@@ -44,9 +44,9 @@ public:
 
     void exportCheckGradParams(CheckGrad& checkgrad){
         checkgrad.add(&words.E, "words E");
-        //checkgrad.add(&hidden_linear.W, "hidden w");
-        //checkgrad.add(&hidden_linear.b, "hidden b");
-        checkgrad.add(&olayer_linear.b, "output layer W");
+        checkgrad.add(&hidden.at(0).W, "hidden W");
+        checkgrad.add(&hidden.at(0).b, "hidden b");
+        checkgrad.add(&olayer_linear.b, "output layer b");
         checkgrad.add(&olayer_linear.W, "output layer W");
     }
 };

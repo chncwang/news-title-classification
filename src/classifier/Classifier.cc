@@ -152,13 +152,14 @@ void Classifier::train(const string &trainFile, const string &devFile,
 
     dtype bestDIS = 0;
 
+
     srand(0);
 
     static vector<Example> subExamples;
     int devNum = devExamples.size(), testNum = testExamples.size();
     int non_exceeds_time = 0;
     auto time_start = std::chrono::high_resolution_clock::now();
-    for (int iter = 0; iter < 1; ++iter) {
+    for (int iter = 0; iter < m_options.maxIter; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
         for (int i = 0; i < trainExamples.size(); ++i) {
@@ -186,8 +187,8 @@ void Classifier::train(const string &trainFile, const string &devFile,
             metric.overall_label_count += m_driver._metric.overall_label_count;
             metric.correct_label_count += m_driver._metric.correct_label_count;
 
+            m_driver.checkgrad(subExamples, curUpdateIter + 1);
             m_driver.updateModel();
-
             std::cout << "current: " << updateIter + 1 << ", total block: "
                     << batchBlock << std::endl;
             metric.print();

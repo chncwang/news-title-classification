@@ -42,7 +42,7 @@ std::vector<Instance> readInstancesFromFile(const std::string &fullFileName, int
         Instance instance;
         readLineToInstance(line, &instance);
         instances.push_back(instance);
-        if (++i >= limit) {
+        if (++i >= limit && limit > 0) {
             break;
         }
     }

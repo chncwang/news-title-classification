@@ -4,6 +4,7 @@
 #include "HyperParams.h"
 #include "MySoftMaxLoss.h"
 #include <array>
+#include <iostream>
 
 constexpr int CNN_LAYER = 1;
 
@@ -44,10 +45,28 @@ public:
 
     void exportCheckGradParams(CheckGrad& checkgrad){
         checkgrad.add(&words.E, "words E");
-        //checkgrad.add(&hidden_linear.W, "hidden w");
-        //checkgrad.add(&hidden_linear.b, "hidden b");
-        checkgrad.add(&olayer_linear.b, "output layer W");
+        checkgrad.add(&hidden.at(0).W, "hidden W");
+        checkgrad.add(&hidden.at(0).b, "hidden b");
+        checkgrad.add(&olayer_linear.b, "output layer b");
         checkgrad.add(&olayer_linear.W, "output layer W");
+    }
+
+    void saveModel(std::ofstream &os) {
+        wordAlpha.write(os);
+        words.save(os);
+        for (UniParams & params : hidden) {
+            params.save(os);
+        }
+        olayer_linear.save(os);
+    }
+
+    void loadModel(std::ifstream &is) {
+        wordAlpha.read(is);
+        words.load(is, &wordAlpha);
+        for (UniParams & params : hidden) {
+            params.load(is);
+        }
+        olayer_linear.load(is);
     }
 };
 

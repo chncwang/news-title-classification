@@ -66,16 +66,13 @@ public:
         return cost;
     }
 
-    inline dtype predict(PNode x, int& y, int excluded_class) {
-        n3ldg_assert(excluded_class >= -1 && excluded_class < 3, "excluded class is " << excluded_class);
+    inline dtype predict(PNode x, int& y) {
         int nDim = x->dim;
 
         int optLabel = -1;
         for (int i = 0; i < nDim; ++i) {
             if (optLabel < 0 || x->val[i] >  x->val[optLabel]) {
-                if (i != excluded_class) {
-                    optLabel = i;
-                }
+                optLabel = i;
             }
         }
         y = optLabel;
@@ -94,10 +91,10 @@ public:
 
     inline dtype cost(PNode x, Category answer, int batchsize = 1) {
         int nDim = x->dim;
-        int labelsize = 3;
+        int labelsize = 32;
         if (labelsize != nDim) {
             std::cerr << "softmax_loss error: dim size invalid" << std::endl;
-            return -1.0;
+            abort();
         }
 
         NRVec<dtype> scores(nDim);

@@ -24,12 +24,14 @@ public:
 
     int createAlphabet(const vector<Instance>& vecTrainInsts);
     int addTestAlpha(const vector<Instance>& vecInsts);
+    void writeModelFile(const string &outputModelFile);
+    void loadModelFile(const string &inputModelFile);
 
     void convert2Example(const Instance* pInstance, Example& exam);
     void initialExamples(const vector<Instance>& vecInsts, vector<Example>& vecExams);
 
     void train(const string& trainFile, const string& devFile, const string& testFile, const string& modelFile, const string& optionFile);
-    Category predict(const Feature& feature, int excludedClass);
+    Category predict(const Feature& feature);
 };
 
 #endif /* SRC_NNCNNLabeler_H_ */

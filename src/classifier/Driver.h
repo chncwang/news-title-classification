@@ -46,6 +46,7 @@ public:
                 << std::endl;
             abort();
         }
+
         _modelparams.exportModelParams(_ada);
 #if USE_GPU
 //        for (BaseParam *p : _ada._params) {
@@ -66,6 +67,7 @@ public:
 
     inline dtype train(const vector<Example> &examples, int iter) {
         n3ldg_cuda::Profiler &profiler = n3ldg_cuda::Profiler::Ins();
+        profiler.SetEnabled(true);
         profiler.BeginEvent("train");
         resetEval();
         _cg.clearValue();
@@ -137,7 +139,7 @@ public:
         return cost;
     }
 
-    inline void predict(const Feature &feature, Category &result, int excluded_class) {
+    inline void predict(const Feature &feature, Category &result) {
         _cg.clearValue();
         _builders.at(0).forward(feature);
         _cg.compute();
@@ -148,7 +150,7 @@ public:
         softMaxPredict(&out, intResult);
 #if TEST_CUDA
         int cpuResult;
-        _modelparams.loss.predict(&out, cpuResult, excluded_class );
+        _modelparams.loss.predict(&out, cpuResult);
         if (cpuResult != intResult) {
             std::cout << "cpuResult:" << cpuResult << " intResult:" <<
                 intResult << std::endl;
@@ -163,7 +165,7 @@ public:
         }
 #endif
 #else
-        _modelparams.loss.predict(&_builders.at(0)._neural_output, intResult, excluded_class );
+        _modelparams.loss.predict(&_builders.at(0)._neural_output, intResult);
 #endif
         result = static_cast<Category>(intResult);
     }

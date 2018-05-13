@@ -10,6 +10,27 @@
 #include "N3LDG_cuda.h"
 #endif
 
+void Classifier::loadModelFile(const string &inputModelFile) {
+    ifstream is(inputModelFile);
+    if (is.is_open()) {
+        m_driver._hyperparams.loadModel(is);
+        m_driver._modelparams.loadModel(is);
+        is.close();
+    } else
+        std::cout << "load model error" << endl;
+}
+
+void Classifier::writeModelFile(const string &outputModelFile) {
+    ofstream os(outputModelFile);
+    if (os.is_open()) {
+        m_driver._hyperparams.saveModel(os);
+        m_driver._modelparams.saveModel(os);
+        os.close();
+        std::cout << "write model ok. " << endl;
+    } else
+        std::cout << "open output file error" << endl;
+}
+
 Classifier::Classifier(int memsize) : m_driver(memsize) {
     srand(0);
 }
@@ -148,9 +169,11 @@ void Classifier::train(const string &trainFile, const string &devFile,
     }
 
     m_driver._hyperparams.setRequared(m_options);
+    std::cout << "hyper worddim:" << m_driver._hyperparams.wordDim << std::endl;
     m_driver.initial();
 
     dtype bestDIS = 0;
+
 
     srand(0);
 
@@ -158,7 +181,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
     int devNum = devExamples.size(), testNum = testExamples.size();
     int non_exceeds_time = 0;
     auto time_start = std::chrono::high_resolution_clock::now();
-    for (int iter = 0; iter < 1; ++iter) {
+    for (int iter = 0; iter < m_options.maxIter; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
         for (int i = 0; i < trainExamples.size(); ++i) {
@@ -186,8 +209,8 @@ void Classifier::train(const string &trainFile, const string &devFile,
             metric.overall_label_count += m_driver._metric.overall_label_count;
             metric.correct_label_count += m_driver._metric.correct_label_count;
 
+            //m_driver.checkgrad(subExamples, curUpdateIter + 1);
             m_driver.updateModel();
-
             std::cout << "current: " << updateIter + 1 << ", total block: "
                     << batchBlock << std::endl;
             metric.print();
@@ -206,8 +229,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
         bCurIterBetter = false;
         assert(devExamples.size() > 0);
         for (int idx = 0; idx < devExamples.size(); idx++) {
-            int excluded_class = -1;
-            Category result = predict(devExamples.at(idx).m_feature, excluded_class);
+            Category result = predict(devExamples.at(idx).m_feature);
 
             devInsts.at(idx).evaluate(result, dev_metric);
         }
@@ -220,16 +242,11 @@ void Classifier::train(const string &trainFile, const string &devFile,
         dev_metric.print();
         dev_acc = dev_metric.getAccuracy();
 
-        if (!m_options.outBest.empty() > bestDIS) {
-            bCurIterBetter = true;
-        }
-
         float test_acc = 0;
         auto test_time_start = std::chrono::high_resolution_clock::now();
         Metric test_metric;
         for (int idx = 0; idx < testExamples.size(); idx++) {
-            int excluded_class = -1;
-            Category category = predict(testExamples.at(idx).m_feature, excluded_class);
+            Category category = predict(testExamples.at(idx).m_feature);
 
             testInsts.at(idx).evaluate(category, test_metric);
         }
@@ -242,34 +259,22 @@ void Classifier::train(const string &trainFile, const string &devFile,
         test_metric.print();
         test_acc = test_metric.getAccuracy();
 
-        if (m_options.saveIntermediate && dev_metric.getAccuracy() > bestDIS) {
+        if (dev_metric.getAccuracy() > bestDIS) {
             std::cout << "Exceeds best previous performance of " << bestDIS
                 << " now is " << dev_acc << std::endl;
             std::cout << "laozhongyi_" << std::min<float>(dev_acc, test_acc) << std::endl;
             non_exceeds_time = 0;
             bestDIS = dev_acc;
+            writeModelFile(m_options.outBest);
         }
     }
 }
 
-Category Classifier::predict(const Feature &feature, int excluded_class) {
+Category Classifier::predict(const Feature &feature) {
     Category category;
-    m_driver.predict(feature, category, excluded_class);
+    m_driver.predict(feature, category);
     return category;
 }
-
-//int main(int argc, char *argv[]) {
-//    vector<Instance> instances = readInstancesFromFile("/home/wqs/news-title-classification/data/train_cla_utf8.txt");
-//    for (Instance &ins : instances) {
-//        std::cout << ins.m_category << std::endl;
-//        for (string &w : ins.m_title_words) {
-//            std::cout << w << "|";
-//        }
-//        std::cout << std::endl;
-//    }
-
-//    return 0;
-//}
 
 int main(int argc, char *argv[]) {
     std::string trainFile = "", devFile = "", testFile = "", modelFile = "", optionFile = "";
@@ -308,6 +313,20 @@ int main(int argc, char *argv[]) {
     if (bTrain) {
         the_classifier.train(trainFile, devFile, testFile, modelFile, optionFile);
     } else {
+        the_classifier.m_options.load(optionFile);
+        the_classifier.m_driver.initial();
+        std::cout << "loading..." << std::endl;
+        the_classifier.loadModelFile(the_classifier.m_options.outBest);
+        std::vector<Instance> devInsts = readInstancesFromFile(devFile);
+        int correct_count = 0;
+        for (Instance &ins : devInsts) {
+            Category category = the_classifier.predict(Feature::valueOf(ins));
+            std::cout << "category:" << category << std::endl;
+            if (category == ins.m_category) {
+                correct_count++;
+            }
+        }
+        std::cout << "acc:" << correct_count / (float)devInsts.size() << std::endl;
     }
 #if USE_GPU
     n3ldg_cuda::EndCuda();

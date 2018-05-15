@@ -33,6 +33,7 @@ struct HyperParams{
     }
 
     void setRequared(Options& opt){
+        wordDim = opt.wordEmbSize;
         nnRegular = opt.regParameter;
         adaAlpha = opt.adaAlpha;
         adaEps = opt.adaEps;

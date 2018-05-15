@@ -47,6 +47,9 @@ public:
     void initial(Graph *pcg, ModelParams &model, HyperParams &opts) {
         _graph = pcg;
         for (LookupNode &n : _input_nodes) {
+            if (opts.wordDim <= 0) {
+                abort();
+            }
             n.init(opts.wordDim, opts.dropProb);
             n.setParam(&model.words);
         }

@@ -66,16 +66,13 @@ public:
         return cost;
     }
 
-    inline dtype predict(PNode x, int& y, int excluded_class) {
-        n3ldg_assert(excluded_class >= -1 && excluded_class < 3, "excluded class is " << excluded_class);
+    inline dtype predict(PNode x, int& y) {
         int nDim = x->dim;
 
         int optLabel = -1;
         for (int i = 0; i < nDim; ++i) {
             if (optLabel < 0 || x->val[i] >  x->val[optLabel]) {
-                if (i != excluded_class) {
-                    optLabel = i;
-                }
+                optLabel = i;
             }
         }
         y = optLabel;

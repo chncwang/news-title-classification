@@ -1,13 +1,12 @@
-batchSize = 16
+batchSize = 1
 hiddenSize = 100
-#hiddenSize = 50
 wordEmbSize = 50
 dropProb = -1
 #wordCutOff = 4
 wordEmbFineTune = true
-maxIter = 10
+maxIter = 100000000
 maxInstance = -1
-outBest = .debug
+outBest = /home/wqs/news-class.model
 adaAlpha = 0.001
 wordcontext = 2
 wordFile = /home/wqs/ctb60.50d.vec

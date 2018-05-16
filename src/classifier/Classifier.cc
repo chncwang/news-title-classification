@@ -209,6 +209,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
             metric.overall_label_count += m_driver._metric.overall_label_count;
             metric.correct_label_count += m_driver._metric.correct_label_count;
 
+            std::cout << "dtype:" << sizeof(dtype) << std::endl;
             m_driver.checkgrad(subExamples, curUpdateIter + 1);
             m_driver.updateModel();
             std::cout << "current: " << updateIter + 1 << ", total block: "
@@ -277,6 +278,7 @@ Category Classifier::predict(const Feature &feature) {
 }
 
 int main(int argc, char *argv[]) {
+    std::cout << "dtype:" << sizeof(dtype) << std::endl;
     std::string trainFile = "", devFile = "", testFile = "", modelFile = "", optionFile = "";
     std::string outputFile = "";
     bool bTrain = false;

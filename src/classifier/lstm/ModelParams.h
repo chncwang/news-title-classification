@@ -32,7 +32,7 @@ public:
         right_to_left_lstm.initial(opts.hiddenSize, opts.wordDim);
         bi_params.initial(opts.hiddenSize, opts.hiddenSize, opts.hiddenSize, true);
 
-        olayer_linear.initial(opts.labelSize, 2 * opts.hiddenSize, true);
+        olayer_linear.initial(opts.labelSize, opts.hiddenSize * 2, false);
         return true;
     }
 
@@ -45,11 +45,25 @@ public:
     }
 
     void exportCheckGradParams(CheckGrad& checkgrad){
-        checkgrad.add(&words.E, "words E");
-        //checkgrad.add(&hidden_linear.W, "hidden w");
-        //checkgrad.add(&hidden_linear.b, "hidden b");
-        checkgrad.add(&olayer_linear.b, "output layer W");
         checkgrad.add(&olayer_linear.W, "output layer W");
+        checkgrad.add(&left_to_right_lstm.cell.W1, "cell W1");
+        checkgrad.add(&left_to_right_lstm.cell.W2, "cell W2");
+        checkgrad.add(&left_to_right_lstm.cell.b, "cell b");
+        checkgrad.add(&left_to_right_lstm.forget.W1, "forget W1");
+        checkgrad.add(&left_to_right_lstm.forget.W2, "forget W2");
+        checkgrad.add(&left_to_right_lstm.forget.b, "forget b");
+        checkgrad.add(&left_to_right_lstm.input.W1, "input W1");
+        checkgrad.add(&left_to_right_lstm.input.W2, "input W2");
+        checkgrad.add(&left_to_right_lstm.input.b, "input b");
+        checkgrad.add(&left_to_right_lstm.output.W1, "output W1");
+        checkgrad.add(&left_to_right_lstm.output.W2, "output W2");
+        checkgrad.add(&left_to_right_lstm.output.b, "output b");
+    }
+
+    void saveModel(std::ofstream &os) {
+    }
+
+    void loadModel(std::ifstream &is) {
     }
 };
 

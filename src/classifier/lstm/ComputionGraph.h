@@ -16,7 +16,7 @@ public:
     LSTM1Builder _left_to_right_lstm;
     LSTM1Builder _right_to_left_lstm;
     std::vector<ConcatNode> _concat_nodes;
-    MinPoolNode _max_pool_node;
+    AvgPoolNode _max_pool_node;
     LinearNode _neural_output;
 
     Graph *_graph;
@@ -49,7 +49,7 @@ public:
             concat.init(opts.hiddenSize * 2, opts.dropProb);
         }
 
-        _max_pool_node.init(opts.hiddenSize * 2, -1);
+        _max_pool_node.init(opts.hiddenSize * 2 , -1);
         _neural_output.init(opts.labelSize, -1);
         _neural_output.setParam(&model.olayer_linear);
         _modelParams = &model;

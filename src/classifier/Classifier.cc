@@ -209,8 +209,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
             metric.overall_label_count += m_driver._metric.overall_label_count;
             metric.correct_label_count += m_driver._metric.correct_label_count;
 
-            std::cout << "dtype:" << sizeof(dtype) << std::endl;
-            m_driver.checkgrad(subExamples, curUpdateIter + 1);
+            //m_driver.checkgrad(subExamples, curUpdateIter + 1);
             m_driver.updateModel();
             std::cout << "current: " << updateIter + 1 << ", total block: "
                     << batchBlock << std::endl;
@@ -303,12 +302,11 @@ int main(int argc, char *argv[]) {
             "This argument decides the size of static memory allocation", memsize);
     int device_id;
     ah.new_named_int("d", "device", "device id", "device id", device_id);
+    ah.process(argc, argv);
+
 #if USE_GPU
     n3ldg_cuda::InitCuda(device_id);
 #endif
-
-    ah.process(argc, argv);
-
     if (memsize < 0)
         memsize = 0;
     Classifier the_classifier(memsize);

@@ -181,7 +181,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
     int devNum = devExamples.size(), testNum = testExamples.size();
     int non_exceeds_time = 0;
     auto time_start = std::chrono::high_resolution_clock::now();
-    for (int iter = 0; iter < m_options.maxIter; ++iter) {
+    for (int iter = 0; iter < 1; ++iter) {
         std::cout << "##### Iteration " << iter << std::endl;
         std::vector<int> indexes;
         for (int i = 0; i < trainExamples.size(); ++i) {
@@ -222,6 +222,7 @@ void Classifier::train(const string &trainFile, const string &devFile,
             << "s" << std::endl;
         float accuracy = metric.getAccuracy();
         std::cout << "train set acc:" << metric.getAccuracy() << std::endl;
+        continue;
         
         float dev_acc = 0.0;
         Metric dev_metric;

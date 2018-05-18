@@ -14,7 +14,7 @@ void Classifier::loadModelFile(const string &inputModelFile) {
     ifstream is(inputModelFile);
     if (is.is_open()) {
         m_driver._hyperparams.loadModel(is);
-        m_driver._modelparams.loadModel(is);
+        //m_driver._modelparams.loadModel(is);
         is.close();
     } else
         std::cout << "load model error" << endl;
@@ -24,7 +24,7 @@ void Classifier::writeModelFile(const string &outputModelFile) {
     ofstream os(outputModelFile);
     if (os.is_open()) {
         m_driver._hyperparams.saveModel(os);
-        m_driver._modelparams.saveModel(os);
+        //m_driver._modelparams.saveModel(os);
         os.close();
         std::cout << "write model ok. " << endl;
     } else

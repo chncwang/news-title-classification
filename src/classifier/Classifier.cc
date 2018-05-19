@@ -5,7 +5,6 @@
 #include <unordered_set>
 #include "Argument_helper.h"
 #include "Reader.h"
-#include "DomainLoss.h"
 #if USE_GPU
 #include "N3LDG_cuda.h"
 #endif

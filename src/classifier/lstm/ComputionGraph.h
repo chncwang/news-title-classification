@@ -69,8 +69,8 @@ public:
         _right_to_left_lstm.forward(_graph, input_node_ptrs);
         for (int i = 0; i < feature.m_title_words.size(); ++i) {
             _concat_nodes.at(i).forward(_graph,
-                    &_left_to_right_lstm._hiddens.at(i),
-                    &_right_to_left_lstm._hiddens.at(i));
+                    &_left_to_right_lstm._hiddenNodes.at(i),
+                    &_right_to_left_lstm._hiddenNodes.at(i));
         }
 
         std::vector<Node*> bi_node_ptrs = toPointers<ConcatNode, Node>(_concat_nodes,

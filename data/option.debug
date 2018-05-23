@@ -9,4 +9,4 @@ maxInstance = -1
 outBest = /home/wqs/news-class.model
 adaAlpha = 0.001
 wordcontext = 2
-wordFile = /home/wqs/ctb60.50d.vec
+#wordFile = /home/wqs/ctb60.50d.vec

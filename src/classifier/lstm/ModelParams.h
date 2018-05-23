@@ -46,18 +46,6 @@ public:
 
     void exportCheckGradParams(CheckGrad& checkgrad){
         checkgrad.add(&olayer_linear.W, "output layer W");
-        checkgrad.add(&left_to_right_lstm.cell.W1, "cell W1");
-        checkgrad.add(&left_to_right_lstm.cell.W2, "cell W2");
-        checkgrad.add(&left_to_right_lstm.cell.b, "cell b");
-        checkgrad.add(&left_to_right_lstm.forget.W1, "forget W1");
-        checkgrad.add(&left_to_right_lstm.forget.W2, "forget W2");
-        checkgrad.add(&left_to_right_lstm.forget.b, "forget b");
-        checkgrad.add(&left_to_right_lstm.input.W1, "input W1");
-        checkgrad.add(&left_to_right_lstm.input.W2, "input W2");
-        checkgrad.add(&left_to_right_lstm.input.b, "input b");
-        checkgrad.add(&left_to_right_lstm.output.W1, "output W1");
-        checkgrad.add(&left_to_right_lstm.output.W2, "output W2");
-        checkgrad.add(&left_to_right_lstm.output.b, "output b");
     }
 
     void saveModel(std::ofstream &os) {

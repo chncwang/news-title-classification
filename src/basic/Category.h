@@ -38,6 +38,13 @@ enum Category {
     TV
 };
 
+std::vector<dtype> ToVector(Category category) {
+    std::vector<dtype> vec;
+    for (int i = 0; i < 32; ++i) {
+        vec.push_back(i == static_cast<int>(category) ? 1.0f : 0.0f);
+    }
+}
+
 Category ToCategory(const std::string &str) {
     if (str == "baby") {
         return Category::BABY;

@@ -304,9 +304,6 @@ int main(int argc, char *argv[]) {
     ah.new_named_int("d", "device", "device id", "device id", device_id);
     ah.process(argc, argv);
 
-#if USE_GPU
-    n3ldg_cuda::InitCuda(device_id);
-#endif
     if (memsize < 0)
         memsize = 0;
     Classifier the_classifier(memsize);
@@ -328,9 +325,4 @@ int main(int argc, char *argv[]) {
         }
         std::cout << "acc:" << correct_count / (float)devInsts.size() << std::endl;
     }
-#if USE_GPU
-    n3ldg_cuda::EndCuda();
-#else
-    n3ldg_cuda::Profiler::Ins().Print();
-#endif
 }

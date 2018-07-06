@@ -11,7 +11,6 @@ class ModelParams{
 public:
     LookupTable words;
     Alphabet wordAlpha;
-    std::array<UniParams, CNN_LAYER> hidden;
 
     UniParams olayer_linear;
     SoftMaxLoss loss;
@@ -23,29 +22,17 @@ public:
         }
         opts.wordDim = words.nDim;
         opts.labelSize = 32;
-        for (int i = 0; i < CNN_LAYER; ++i) {
-            if (i == 0) {
-                hidden.at(i).initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.wordDim, true);
-            } else {
-                hidden.at(i).initial(opts.hiddenSize, (1 + 2 * opts.wordContext) * opts.hiddenSize, true);
-            }
-        }
-        olayer_linear.initial(opts.labelSize, opts.hiddenSize, true);
+        olayer_linear.initial(opts.labelSize, opts.wordDim, true);
         return true;
     }
 
     void exportModelParams(ModelUpdate& ada){
         words.exportAdaParams(ada);
-        for (int i = 0; i < CNN_LAYER; ++i) {
-            hidden.at(i).exportAdaParams(ada);
-        }
         olayer_linear.exportAdaParams(ada);
     }
 
     void exportCheckGradParams(CheckGrad& checkgrad){
         checkgrad.add(&words.E, "words E");
-        checkgrad.add(&hidden.at(0).W, "hidden W");
-        checkgrad.add(&hidden.at(0).b, "hidden b");
         checkgrad.add(&olayer_linear.b, "output layer b");
         checkgrad.add(&olayer_linear.W, "output layer W");
     }
@@ -53,18 +40,12 @@ public:
     void saveModel(std::ofstream &os) {
         wordAlpha.write(os);
         words.save(os);
-        for (UniParams & params : hidden) {
-            params.save(os);
-        }
         olayer_linear.save(os);
     }
 
     void loadModel(std::ifstream &is) {
         wordAlpha.read(is);
         words.load(is, &wordAlpha);
-        for (UniParams & params : hidden) {
-            params.load(is);
-        }
         olayer_linear.load(is);
     }
 };

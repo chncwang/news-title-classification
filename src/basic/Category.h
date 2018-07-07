@@ -43,6 +43,7 @@ std::vector<dtype> ToVector(Category category) {
     for (int i = 0; i < 32; ++i) {
         vec.push_back(i == static_cast<int>(category) ? 1.0f : 0.0f);
     }
+    return vec;
 }
 
 Category ToCategory(const std::string &str) {
